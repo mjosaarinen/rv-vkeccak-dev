@@ -1,0 +1,3 @@
+[submodule "riscv-isa-manual"]
+	path = riscv-isa-manual
+	url = git@github.com:mjosaarinen/riscv-isa-manual.git
