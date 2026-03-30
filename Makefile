@@ -38,6 +38,9 @@ html: submodule-init
 
 clean:
 	$(MAKE) -C $(MANUAL_DIR) clean
+	rm -rf $(MANUAL_DIR)/dependencies/node_modules
+	rm -f $(MANUAL_DIR)/dependencies/Gemfile.lock
+	rm -f $(MANUAL_DIR)/dependencies/package-lock.json
 
 docker-pull:
 	docker pull ghcr.io/riscv/riscv-docs-base-container-image:latest
