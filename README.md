@@ -3,6 +3,9 @@
 Development of RISC-V Vector Keccak extension (Zvknhk) specification,
 based on the [riscv-isa-manual](https://github.com/riscv/riscv-isa-manual).
 
+For information about Spike ISA emulation and basic tests for the Keccak
+instruction, see [keccak-xrv](https://github.com/mjosaarinen/keccak-xrv).
+
 ## Build Setup (Ubuntu 24.04)
 
 ### 1. Clone with submodules
