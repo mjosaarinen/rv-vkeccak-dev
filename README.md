@@ -21,46 +21,37 @@ If already cloned without submodules:
 cd riscv-isa-manual && git submodule update --init --recursive && cd ..
 ```
 
-### 2. Install system packages
+### 2. Install dependencies
+
+The quickest path (requires `sudo`):
 
 ```bash
-sudo apt-get update
-sudo apt-get install -y \
-    bison build-essential cmake curl flex fonts-lyx git graphviz \
-    default-jre libcairo2-dev libffi-dev libgdk-pixbuf2.0-dev \
-    libglib2.0-dev libpango1.0-dev libwebp-dev libxml2-dev \
-    libzstd-dev make pkg-config ruby ruby-dev nodejs npm
+sudo make install-deps
 ```
 
-### 3. Install Ruby gems
+This reads system packages from `riscv-isa-manual/dependencies/apt_packages.txt`
+and Ruby gems from `riscv-isa-manual/dependencies/Gemfile`. You also need
+`libgdk-pixbuf-xlib-2.0-dev` and a few extras not covered by the upstream Gemfile:
 
 ```bash
-gem install bundler
-cd riscv-isa-manual/dependencies && bundle install && cd ../..
+sudo apt-get install -y libgdk-pixbuf-xlib-2.0-dev nodejs npm
 gem install asciidoctor-sail asciidoctor-diagram-ditaamini
-```
-
-### 4. Install Node.js packages
-
-```bash
 sudo npm install -g wavedrom-cli bytefield-svg
 ```
 
-### 5. Build
+### 3. Build
 
 ```bash
-make pdf    # PDF output in riscv-isa-manual/build/riscv-spec.pdf
-make html   # HTML output in riscv-isa-manual/build/riscv-spec.html
-make clean  # remove build artifacts
+make pdf    # PDF  -> riscv-isa-manual/build/riscv-spec.pdf
+make html   # HTML -> riscv-isa-manual/build/riscv-spec.html
+make clean
 ```
 
-## Build with Docker (alternative)
-
-If you prefer Docker over installing dependencies natively:
+To build with Docker instead of native dependencies:
 
 ```bash
 make docker-pull
-make pdf
+make pdf SKIP_DOCKER=false
 ```
 
 ## Project Structure

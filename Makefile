@@ -15,10 +15,8 @@ MANUAL_DIR := riscv-isa-manual
 BUILD_DIR  := $(MANUAL_DIR)/build
 
 # Pass through to the ISA manual Makefile
-MAKE_OPTS :=
-ifdef SKIP_DOCKER
-  MAKE_OPTS += SKIP_DOCKER=$(SKIP_DOCKER)
-endif
+SKIP_DOCKER ?= true
+MAKE_OPTS := SKIP_DOCKER=$(SKIP_DOCKER)
 
 .PHONY: all pdf html clean docker-pull install-deps submodule-init
 
