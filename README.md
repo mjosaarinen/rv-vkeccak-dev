@@ -5,10 +5,10 @@ based on the [riscv-isa-manual](https://github.com/riscv/riscv-isa-manual).
 
 The upstream manual is included as a **pristine submodule** (pinned to a
 specific upstream commit). Our only local change — the `zvknhk.adoc` chapter
-and a one-line include in `unpriv.adoc` — lives in this repo and is layered on
-top of the submodule at build time by `scripts/apply-patch.sh`. Nothing is
-committed inside the submodule, so tracking upstream is just a matter of
-bumping the pinned commit.
+and a one-line include in the Cryptography Extensions chapter — lives in this
+repo and is layered on top of the submodule at build time by
+`scripts/apply-patch.sh`. Nothing is committed inside the submodule, so tracking
+upstream is just a matter of bumping the pinned commit.
 
 For information about Spike ISA emulation and basic tests for the Keccak
 instruction, see [keccak-xrv](https://github.com/mjosaarinen/keccak-xrv).
@@ -28,9 +28,10 @@ git submodule update --init --recursive
 ```
 
 Either way, `make pdf`/`make html` run `make patch` first, which copies
-`zvknhk.adoc` into the manual's `src/` and inserts the `include::zvknhk.adoc[]`
-line into `src/unpriv.adoc`. The step is idempotent, so it is safe to re-run; you
-can also apply the patch on its own with `make patch`.
+`zvknhk.adoc` into the manual's `src/unpriv/` and adds an `include::` for it to
+`src/unpriv/crypto.adoc` (right after the Vector Cryptography section). The step
+is idempotent, so it is safe to re-run; you can also apply the patch on its own
+with `make patch`.
 
 ## Build — Docker (recommended)
 
@@ -105,28 +106,49 @@ Notes for recent Debian/Ubuntu:
   predates CMake 4; `CMAKE_POLICY_VERSION_MINIMUM=3.5` lets it configure. Both
   `make install-deps` and the command above set this.
 
+## Cleaning
+
+```bash
+make clean         # remove build artifacts (riscv-isa-manual/build)
+make force-clean   # same, but also removes artifacts left owned by root
+```
+
+Docker builds run as your UID (`--user $(id -u)`), so artifacts are normally
+yours and `make clean` just works. If a build ever leaves root-owned files under
+`build/` (e.g. one run without `--user`, or a mis-mounted run that drops stray
+`build/ src/ docs-resources/ normative_rule_defs/` dirs at the repo root),
+`make force-clean` deletes them from inside the container (which runs as root) —
+no `sudo` needed.
+
 ## Editing the extension
 
 `zvknhk.adoc` at the repo root is the source of truth for the chapter. Edit it
-there, then rebuild — do **not** edit `riscv-isa-manual/src/zvknhk.adoc`, which
-is an overwritten copy.
+there, then rebuild — do **not** edit `riscv-isa-manual/src/unpriv/zvknhk.adoc`,
+which is an overwritten copy.
 
 ## Updating the upstream manual
 
 The `riscv-isa-manual` submodule points at pristine upstream. To move to a newer
-upstream revision:
+upstream revision, first drop the patched-in files so the checkout isn't blocked
+by the dirty work tree, then switch and re-pin:
 
 ```bash
 cd riscv-isa-manual
+git checkout -- src/unpriv/crypto.adoc      # revert the include line
+rm -f src/unpriv/zvknhk.adoc                 # drop the copied-in chapter
 git fetch origin
-git checkout <new-commit-or-tag>
+git checkout <new-commit-or-tag>             # e.g. origin/main for the latest
+git submodule update --init --recursive      # sync docs-resources
 cd ..
-git add riscv-isa-manual        # record the new pinned commit
+git add riscv-isa-manual                     # record the new pinned commit
+make pdf SKIP_DOCKER=false                    # re-applies the patch and builds
 ```
 
-If upstream reorders the `include::` lines in `src/unpriv.adoc`,
-`scripts/apply-patch.sh` will report a missing anchor — update the `ANCHOR`
-there to match.
+`scripts/apply-patch.sh` hardcodes the source paths and the anchor line it
+inserts after (`src/unpriv/crypto.adoc`, after `include::zvk.adoc[]`). Upstream
+occasionally reorganizes its source tree — the manual was migrated into
+`src/unpriv/` + `modules/` around mid-2026 — so if the paths or anchor move, the
+script fails loudly; update the variables at the top of it to match.
 
 ## Project Structure
 
