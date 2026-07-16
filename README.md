@@ -1,17 +1,25 @@
 # rv-vkeccak-dev
 
-Development of RISC-V Vector Keccak extension (Zvknhk) specification,
-based on the [riscv-isa-manual](https://github.com/riscv/riscv-isa-manual).
+Development of the **`Zvknhk`** RISC-V Vector Keccak extension.
 
-The upstream manual is included as a **pristine submodule** (pinned to a
-specific upstream commit). Our only local change — the `zvknhk.adoc` chapter
-and a one-line include in the Cryptography Extensions chapter — lives in this
-repo and is layered on top of the submodule at build time by
-`scripts/apply-patch.sh`. Nothing is committed inside the submodule, so tracking
-upstream is just a matter of bumping the pinned commit.
+**This repository exists to develop [`zvknhk.adoc`](zvknhk.adoc)** — the
+`Zvknhk` (Vector Keccak) extension chapter, and the single source of truth for the
+specification. It defines the `Zvknhk` extension and its instruction `vkeccak.vi`,
+a vector-immediate multi-round Keccak-_p_[1600] permutation. **Edit it in the repo
+root.**
 
-For information about Spike ISA emulation and basic tests for the Keccak
-instruction, see [keccak-xrv](https://github.com/mjosaarinen/keccak-xrv).
+Everything else here is scaffolding to render that one chapter, in context, as part
+of the official RISC-V ISA manual so it can be reviewed as a normative document. The
+[riscv-isa-manual](https://github.com/riscv/riscv-isa-manual) is included as a
+**pristine, pinned submodule**: at build time `scripts/apply-patch.sh` copies
+`zvknhk.adoc` into it and adds a single `include::` line, so the chapter renders as
+a section of the Cryptography Extensions (e.g. §11.4, "Zvknhk Extension for Vector
+Keccak"). Nothing is ever committed inside the submodule — tracking upstream is just
+a matter of bumping the pinned commit. Do **not** edit the generated copy at
+`riscv-isa-manual/src/unpriv/zvknhk.adoc`.
+
+For Spike ISA emulation and basic tests for the Keccak instruction, see
+[keccak-xrv](https://github.com/mjosaarinen/keccak-xrv).
 
 ## Getting the sources
 
@@ -120,12 +128,6 @@ yours and `make clean` just works. If a build ever leaves root-owned files under
 `make force-clean` deletes them from inside the container (which runs as root) —
 no `sudo` needed.
 
-## Editing the extension
-
-`zvknhk.adoc` at the repo root is the source of truth for the chapter. Edit it
-there, then rebuild — do **not** edit `riscv-isa-manual/src/unpriv/zvknhk.adoc`,
-which is an overwritten copy.
-
 ## Updating the upstream manual
 
 The `riscv-isa-manual` submodule points at pristine upstream. To move to a newer
@@ -152,7 +154,8 @@ script fails loudly; update the variables at the top of it to match.
 
 ## Project Structure
 
-- `zvknhk.adoc` -- Zvknhk (Vector Keccak) extension chapter (**patch source of truth**)
+- **`zvknhk.adoc`** -- the Zvknhk (Vector Keccak) extension chapter: the reason this
+  repo exists and the single source of truth for the spec
 - `scripts/apply-patch.sh` -- Layers `zvknhk.adoc` onto the upstream manual sources
 - `riscv-isa-manual/` -- Pristine upstream RISC-V ISA manual (submodule; itself
   has a `docs-resources` submodule)
