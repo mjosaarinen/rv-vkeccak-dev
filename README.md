@@ -5,21 +5,15 @@ Development of the **`Zvknhk`** RISC-V Vector Keccak extension.
 **This repository exists to develop [`zvknhk.adoc`](zvknhk.adoc)** — the
 `Zvknhk` (Vector Keccak) extension chapter, and the single source of truth for the
 specification. It defines the `Zvknhk` extension and its instruction `vkeccak.vi`,
-a vector-immediate multi-round Keccak-_p_[1600] permutation. **Edit it in the repo
-root.**
+a vector-immediate multi-round Keccak-_p_[1600] permutation. 
+
+**Edit it in the repo root.**
 
 Everything else here is scaffolding to render that one chapter, in context, as part
-of the official RISC-V ISA manual so it can be reviewed as a normative document. The
-[riscv-isa-manual](https://github.com/riscv/riscv-isa-manual) is included as a
-**pristine, pinned submodule**: at build time `scripts/apply-patch.sh` copies
-`zvknhk.adoc` into it and adds a single `include::` line, so the chapter renders as
-a section of the Cryptography Extensions (e.g. §11.4, "Zvknhk Extension for Vector
-Keccak"). Nothing is ever committed inside the submodule — tracking upstream is just
-a matter of bumping the pinned commit. Do **not** edit the generated copy at
-`riscv-isa-manual/src/unpriv/zvknhk.adoc`.
+of the official RISC-V ISA manual so it can be reviewed as a normative document.
 
-For Spike ISA emulation and basic tests for the Keccak instruction, see
-[keccak-xrv](https://github.com/mjosaarinen/keccak-xrv).
+Do **not** edit the generated copy at `riscv-isa-manual/src/unpriv/zvknhk.adoc`.
+
 
 ## Getting the sources
 
@@ -136,21 +130,20 @@ by the dirty work tree, then switch and re-pin:
 
 ```bash
 cd riscv-isa-manual
-git checkout -- src/unpriv/crypto.adoc      # revert the include line
+git checkout -- src/unpriv/crypto.adoc       # revert the include line
 rm -f src/unpriv/zvknhk.adoc                 # drop the copied-in chapter
 git fetch origin
 git checkout <new-commit-or-tag>             # e.g. origin/main for the latest
 git submodule update --init --recursive      # sync docs-resources
 cd ..
 git add riscv-isa-manual                     # record the new pinned commit
-make pdf SKIP_DOCKER=false                    # re-applies the patch and builds
+make pdf SKIP_DOCKER=false                   # re-applies the patch and builds
 ```
 
 `scripts/apply-patch.sh` hardcodes the source paths and the anchor line it
-inserts after (`src/unpriv/crypto.adoc`, after `include::zvk.adoc[]`). Upstream
-occasionally reorganizes its source tree — the manual was migrated into
-`src/unpriv/` + `modules/` around mid-2026 — so if the paths or anchor move, the
-script fails loudly; update the variables at the top of it to match.
+inserts after (`src/unpriv/crypto.adoc`, after `include::zvk.adoc[]`).
+
+Note: Upstream was migrated into `src/unpriv/` + `modules/` around mid-2026.
 
 ## Project Structure
 
