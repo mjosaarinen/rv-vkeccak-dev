@@ -1,3 +1,7 @@
 [submodule "riscv-isa-manual"]
 	path = riscv-isa-manual
-	url = git@github.com:mjosaarinen/riscv-isa-manual.git
+	url = https://github.com/riscv/riscv-isa-manual.git
+	# The build patches zvknhk.adoc into src/ in place (see scripts/apply-patch.sh),
+	# which dirties the submodule work tree. Ignore that so `git status` stays clean;
+	# a changed pinned commit still shows up.
+	ignore = dirty

@@ -23,6 +23,10 @@ if [ ! -f docs-resources/global-config.adoc ]; then
     git submodule update --init --recursive
 fi
 
+# Layer the Zvknhk chapter onto the manual sources before building, otherwise
+# the produced document would be pristine upstream without our extension.
+"$SCRIPT_DIR/apply-patch.sh"
+
 case "$TARGET" in
     pdf)  make build-pdf  ;;
     html) make build-html ;;
