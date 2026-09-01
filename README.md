@@ -382,8 +382,8 @@ variables at the top of it.
 - `test/` -- instruction tests: SHA-3 / SHAKE (24 rounds) and TurboSHAKE
   (12 rounds) known-answer vectors
 - `riscv-spec.pdf` -- a checked-in render of the manual with the chapter
-  included. A snapshot, not a build artifact: it is `Version 20260716`, older
-  than the currently pinned upstream, so rebuild rather than cite it
+  included, so it can be read without building it. Copied by hand from
+  `riscv-isa-manual/build/`, so it lags the sources until someone refreshes it
 - `misc/rfc9861.txt` -- RFC 9861, the source of the TurboSHAKE test vectors
 - `scripts/apply-patch.sh` -- Layers `zvknhk.adoc` onto the upstream manual sources
 - `scripts/apply-spike-patch.sh` -- Layers the Zvknhk instruction onto the
