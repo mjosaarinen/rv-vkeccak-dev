@@ -37,13 +37,14 @@ also pulls the manual's own `docs-resources` submodule):
 git submodule update --init --recursive
 ```
 
-There are three submodules, all tracking pristine upstream:
+There are four submodules, all tracking pristine upstream:
 
 | Submodule | Upstream | Pinned at | Patched by |
 |---|---|---|---|
 | `riscv-isa-manual` | `github.com/riscv/riscv-isa-manual` | `e5c0c60f` | `scripts/apply-patch.sh` |
 | `riscv-isa-sim` | `github.com/riscv-software-src/riscv-isa-sim` | `549da3fa` | `scripts/apply-spike-patch.sh` |
 | `qemu-src` | `gitlab.com/qemu-project/qemu` | `d2e570cc` | `scripts/apply-qemu-patch.sh` |
+| `demo/openssl` | `github.com/openssl/openssl` | `f089acdf` (`openssl-4.0.2`) | `scripts/apply-openssl-patch.sh` |
 
 The pinned revisions are whatever `git submodule status` reports; the table
 records the ones this documentation was written against.
@@ -55,6 +56,7 @@ local remote has drifted off upstream — check it:
 git -C riscv-isa-manual remote -v      # must be riscv/riscv-isa-manual
 git -C riscv-isa-sim    remote -v      # must be riscv-software-src/riscv-isa-sim
 git -C qemu-src         remote -v      # must be qemu-project/qemu
+git -C demo/openssl     remote -v      # must be openssl/openssl
 ```
 
 Either way, `make pdf`/`make html` run `make patch` first, which copies
@@ -297,6 +299,51 @@ Note that QEMU caps VLEN at `RV_VLEN_MAX`, currently 1024, so the `VLEN >= 2048`
 row of the specification's table cannot be exercised there; Spike has no such
 cap.
 
+## Build — OpenSSL
+
+The third target is not a simulator but a consumer. `demo/openssl` is a
+pristine upstream OpenSSL checkout, and `scripts/apply-openssl-patch.sh` layers
+a `vkeccak.vi` Keccak backend onto it in the same anchor-based way as the other
+two patches. `make openssl` runs the patch, configures once, and cross-builds:
+
+```bash
+make openssl            # -> demo/openssl/build/apps/openssl
+make patch-openssl      # apply the patch only
+make unpatch-openssl    # restore demo/openssl to pristine upstream
+make openssl-clean      # remove demo/openssl/build
+```
+
+It is a two-line patch: a `ZVKNHK` capability bit in the RISC-V capability
+table, and one `#include` in `crypto/sha/keccak1600.c` that redirects
+`KeccakF1600()`. Hooking the permutation rather than the digest provider is
+what makes it two lines instead of a rewrite — and it is what puts the
+instruction under SHA-3, SHAKE, KMAC, ML-KEM, ML-DSA and SLH-DSA at once, in
+both the default and the FIPS provider.
+
+Zvknhk is not an upstream extension, so the kernel has no hwprobe bit for it.
+OpenSSL's `OPENSSL_riscvcap` override is therefore how it is switched on, which
+suits an emulator exactly:
+
+```bash
+OPENSSL_riscvcap=rv64gc_v_zvknhk \
+    qemu-src/build/qemu-riscv64 -L $RISCV/sysroot \
+    -cpu rv64,v=true,vlen=256,elen=64,zvknhk=true \
+    demo/openssl/build/apps/openssl dgst -sha3-256 /dev/null
+```
+
+`_v_` needs its own underscore — OpenSSL's parser looks for a literal `_V`, and
+without it `VLEN` reads back as 0 and the backend silently declines to the C
+path.
+
+**[`openssl/README.md`](openssl/README.md) is the writeup of how the instruction
+is wired in** — the two insertion sites, why `KeccakF1600()` and not
+`PROV_SHA3_METHOD`, how one `#include` redirects both call sites, and why the
+vector clobbers are not optional.
+
+The cross build needs the same `riscv64-unknown-linux-gnu` toolchain as `test/`.
+It is configured `no-shared`, so `apps/openssl` carries OpenSSL statically;
+libc is still dynamic, hence the `-L $RISCV/sysroot` above.
+
 ## Tests
 
 `test/` holds the instruction test suite. It builds a static RISC-V binary and
@@ -327,6 +374,26 @@ make boot-qemu       # system-mode: boot test/system/ on qemu-system-riscv64
 make boot-qemu-all   # the same, at every VLEN QEMU supports
 make -C test run-qemu-dyn   # a dynamically linked build of the same suite
 ```
+
+`demo/` checks the same instruction from the other end — through OpenSSL,
+where nothing knows it exists:
+
+```bash
+make test-openssl      # sixteen checks at VLEN=256
+make test-openssl-all  # at every VLEN QEMU supports (128..1024)
+make -C demo count      # instructions removed per operation (emulator)
+make -C demo cycles     # rdcycle/rdinstret, best of N runs -- run on the target
+make -C demo cycles-qemu # the same code path under QEMU (host ticks, not cycles)
+```
+
+Those are SHA-3 and SHAKE known answers with the capability on and off — the
+SHAKE vectors run to 200 bytes, past the rate, because shorter output never
+reaches the permutation in `SHA3_squeeze()` — an ML-KEM-768 and an ML-DSA-65
+round trip, a fingerprint comparison that cross-checks both backends over the
+whole PQC path, and a negative test that runs the same binary with the same
+`OPENSSL_riscvcap` against a QEMU CPU *without* `zvknhk` and requires exit
+status 132 (SIGILL). Without that last one a passing suite would prove nothing:
+falling back to the C code produces identical digests.
 
 The fixed element group spans `NREG = ceil(2048/VLEN)` registers, so both its
 extent and the set of legal `vd` change with `VLEN`. The tests are built for
@@ -443,8 +510,18 @@ variables at the top of it.
 - `test/system/` -- a full-system smoke test booted on qemu-system-riscv64
 - `scripts/apply-qemu-patch.sh` -- Layers the Zvknhk instruction onto the
   upstream QEMU sources
+- **`openssl/`** -- the Keccak backend for OpenSSL, and
+  [`openssl/README.md`](openssl/README.md), the writeup of how it is wired in
+- `demo/` -- checks that OpenSSL's SHA-3, ML-KEM and ML-DSA really run on the
+  instruction, including a negative test that proves the fallback isn't hiding.
+  `pqcbench.c` drives one operation at a time for measurement, and `count.sh`
+  counts instructions under QEMU with the per-permutation figures calibrated on
+  each run rather than hardcoded
+- `scripts/apply-openssl-patch.sh` -- Layers the Zvknhk Keccak backend onto the
+  upstream OpenSSL sources
 - `riscv-isa-manual/` -- Pristine upstream RISC-V ISA manual (submodule; itself
   has a `docs-resources` submodule)
 - `riscv-isa-sim/` -- Pristine upstream Spike / RISC-V ISA simulator (submodule)
 - `qemu-src/` -- Pristine upstream QEMU (submodule)
+- `demo/openssl/` -- Pristine upstream OpenSSL (submodule)
 - `scripts/` -- Helper scripts for dependency installation and Docker builds

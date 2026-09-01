@@ -19,3 +19,13 @@
 	# (see scripts/apply-qemu-patch.sh), which dirties the submodule work tree.
 	# Ignore that so `git status` stays clean; a changed pinned commit still shows.
 	ignore = dirty
+[submodule "demo/openssl"]
+	path = demo/openssl
+	url = https://github.com/openssl/openssl.git
+	# The build patches the Zvknhk Keccak backend into crypto/sha/ and the RISC-V
+	# capability table in place (see scripts/apply-openssl-patch.sh), and builds
+	# in demo/openssl/build. Ignore that so `git status` stays clean; a changed
+	# pinned commit still shows.
+	ignore = dirty
+	# OpenSSL's full history is large and only one release is ever needed here.
+	shallow = true

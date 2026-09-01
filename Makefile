@@ -16,6 +16,13 @@
 #   make test-qemu    — Build and run the instruction tests under the built QEMU
 #   make test-qemu-all— Run the tests under QEMU at every VLEN it supports
 #   make boot-qemu    — Boot the system-mode smoke test on qemu-system-riscv64
+#   make openssl      — Build OpenSSL (demo/openssl) with the Zvknhk backend
+#   make patch-openssl— Patch the Zvknhk Keccak backend into the OpenSSL sources
+#   make unpatch-openssl — Restore the OpenSSL sources to pristine upstream
+#   make test-openssl — Run the OpenSSL Keccak/ML-KEM/ML-DSA checks under QEMU
+#   make test-openssl-all — Run those checks at every VLEN QEMU supports
+#   make -C demo count    — Instructions removed per ML-KEM/ML-DSA operation
+#   make -C demo cycles   — Cycles per operation; runs natively, on the target
 #   make docker-pull  — Pull the RISC-V docs Docker image
 #   make install-deps — Install native build deps (Ubuntu/Debian, needs sudo)
 #   make clean        — Remove build artifacts
@@ -36,13 +43,23 @@ QEMU_DIR   := qemu-src
 QEMU_BUILD := $(QEMU_DIR)/build
 QEMU_USER  := $(QEMU_BUILD)/qemu-riscv64
 QEMU_SYS   := $(QEMU_BUILD)/qemu-system-riscv64
+SSL_DIR    := demo/openssl
+SSL_BUILD  := $(SSL_DIR)/build
+SSL_APP    := $(SSL_BUILD)/apps/openssl
 TEST_DIR   := test
+DEMO_DIR   := demo
 
 # QEMU targets. riscv64-linux-user runs RISC-V Linux binaries, static and
 # dynamic alike; riscv64-softmmu is full-system emulation, for booting a
 # kernel. Override QEMU_TARGETS to build just one of them.
 QEMU_TARGETS ?= riscv64-linux-user,riscv64-softmmu
 QEMU_CONFIG_FLAGS ?= --target-list=$(QEMU_TARGETS) --disable-docs --disable-werror
+
+# OpenSSL cross build. no-shared keeps apps/openssl free of an OpenSSL runtime
+# search path; libc is still dynamic, so the emulator needs -L $(RISCV)/sysroot.
+SSL_CROSS ?= riscv64-unknown-linux-gnu-
+SSL_CONFIG_FLAGS ?= linux64-riscv64 --cross-compile-prefix=$(SSL_CROSS) \
+                    --prefix=/usr/local/openssl-zvknhk no-shared
 
 # Parallelism for the Spike build (the ISA manual build is not parallelisable).
 NPROC ?= $(shell nproc 2>/dev/null || echo 4)
@@ -59,6 +76,8 @@ MAKE_OPTS := SKIP_DOCKER=$(SKIP_DOCKER)
 .PHONY: spike patch-spike unpatch-spike test test-all test-clean spike-clean sim-submodule-init
 .PHONY: qemu patch-qemu unpatch-qemu qemu-clean qemu-submodule-init test-qemu test-qemu-all
 .PHONY: boot-qemu boot-qemu-all
+.PHONY: openssl patch-openssl unpatch-openssl openssl-clean openssl-submodule-init
+.PHONY: test-openssl test-openssl-all
 
 # The PDF and HTML builds share riscv-isa-manual/build (and build/images-out),
 # so they must not run concurrently — force serial execution even under `make -j`.
@@ -100,7 +119,7 @@ clean:
 	rm -rf $(MANUAL_DIR)/dependencies/node_modules
 	rm -f $(MANUAL_DIR)/dependencies/Gemfile.lock
 	rm -f $(MANUAL_DIR)/dependencies/package-lock.json
-	$(MAKE) spike-clean qemu-clean test-clean
+	$(MAKE) spike-clean qemu-clean openssl-clean test-clean
 
 # Recovery target: a Docker build that ran without --user (or a mis-mounted one)
 # can leave build files owned by root that `clean` can't remove without sudo.
@@ -219,3 +238,57 @@ boot-qemu-all: qemu
 qemu-clean:
 	rm -rf $(QEMU_BUILD)
 	$(MAKE) -C $(TEST_DIR)/system clean
+
+# --- OpenSSL (demo/openssl) -------------------------------------------------
+#
+# Same pattern once more: OpenSSL is a pristine upstream submodule and
+# scripts/apply-openssl-patch.sh layers the Zvknhk Keccak backend onto it. The
+# patch is idempotent, so it is safe to re-run on every build. See
+# openssl/README.md for what it inserts and why it goes where it does.
+#
+# This is the consumer-facing end of the extension: patching KeccakF1600()
+# puts vkeccak.vi under SHA-3, SHAKE, KMAC, ML-KEM, ML-DSA and SLH-DSA at once.
+
+openssl-submodule-init:
+	@if [ ! -f $(SSL_DIR)/crypto/sha/keccak1600.c ]; then \
+		echo "Initializing the $(SSL_DIR) submodule..."; \
+		git submodule update --init --recursive $(SSL_DIR); \
+	fi
+
+patch-openssl: openssl-submodule-init
+	./scripts/apply-openssl-patch.sh
+
+# Restore the OpenSSL sources to pristine upstream. Needed after changing
+# *what* apply-openssl-patch.sh inserts: each site is guarded by a token that
+# only the patch introduces, so an already-patched file is skipped and would
+# otherwise keep the previous version of the insertion.
+unpatch-openssl:
+	git -C $(SSL_DIR) checkout -- crypto/sha/ include/crypto/
+	rm -f $(SSL_DIR)/crypto/sha/keccak1600_zvknhk.c.inc
+
+# Configure once, then build. Re-running is cheap; the configure step is
+# skipped when the build directory already has a Makefile.
+openssl: patch-openssl
+	@mkdir -p $(SSL_BUILD)
+	@if [ ! -f $(SSL_BUILD)/Makefile ]; then \
+		echo "==> Configuring OpenSSL..."; \
+		cd $(SSL_BUILD) && ../Configure $(SSL_CONFIG_FLAGS); \
+	fi
+	@echo "==> Building OpenSSL (-j$(NPROC))..."
+	$(MAKE) -C $(SSL_BUILD) -j$(NPROC)
+	@echo -e '\n  Built $(SSL_APP)\n'
+
+# Known-answer checks for SHA-3 and SHAKE with the instruction on and off, an
+# ML-KEM and an ML-DSA round trip, and a negative test that the instruction is
+# genuinely executing. Needs the QEMU from `make qemu`.
+# Depends on qemu as well as openssl: the checks run the emulator built here,
+# and the negative test needs a CPU model that can be told to omit Zvknhk.
+test-openssl: openssl qemu
+	$(MAKE) -C $(DEMO_DIR) test QEMU=$(abspath $(QEMU_USER))
+
+test-openssl-all: openssl qemu
+	$(MAKE) -C $(DEMO_DIR) test-all QEMU=$(abspath $(QEMU_USER))
+
+openssl-clean:
+	rm -rf $(SSL_BUILD)
+	$(MAKE) -C $(DEMO_DIR) clean
