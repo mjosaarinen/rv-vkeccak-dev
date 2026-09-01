@@ -1,12 +1,28 @@
-// vkeccak.vi vd, zimm5
-
-#include "zvkned_ext_macros.h"
-#include "zvk_ext_macros.h"
+// vkeccak.vi vd, imm5
+//
+// Zvknhk: vector-immediate multi-round Keccak-p[1600] permutation.
+//
+// This follows the normative definition in zvknhk.adoc. Points where it
+// deliberately differs from an ordinary vector-crypto instruction:
+//
+//   - The state is ONE fixed element group designated by 'vd', with
+//     EMUL = NREG = ceil(EGW/VLEN), independent of LMUL. It is not
+//     strip-mined, so there is no loop over element groups and no
+//     dependence on 'vl' whatsoever.
+//   - The Vector Crypto constraint LMUL*VLEN >= EGW does NOT apply, so
+//     require_egw_fits() must not be used here. Likewise EGS > VLMAX is
+//     explicitly not reserved for this instruction.
+//   - 'imm5' is a round-count *selector*, not a round count, and it travels
+//     in the vs2 field (bits 24:20) rather than the usual vs1 field.
+//   - Elements 25..31 (the state tail) and every bit outside the fixed group
+//     are left unchanged. The state tail is not the architectural vector
+//     tail, so 'vta' does not apply to it.
 
 #define KECCAK_ROL(data, amt)  (((data) << (amt)) | ((data) >> (64 - (amt))))
 
-// round constants for ι step
-const uint64_t KECCAK_RC[25] = {
+// Round constants for the iota step (FIPS 202, Sec. 3.2.5).
+static constexpr uint64_t KECCAK_RC[24] = {
+
     0x0000000000000001, // RC[0]
     0x0000000000008082, // RC[1]
     0x800000000000808A, // RC[2]
@@ -33,56 +49,69 @@ const uint64_t KECCAK_RC[25] = {
     0x8000000080008008, // RC[23]
 };
 
-require_vkeccak_vi_constraints;
+// Reserved encodings (zvknhk.adoc, "Reserved Encodings").
+require_vector(true);
+require_extension(EXT_ZVKK);
+require(P.VU.vsew == 64);             // SEW other than 64 is reserved
+require(insn.v_vm() == 1);            // vm=0 is reserved
 
-VI_ZVK_VD_VS2_NOOPERANDS_PRELOOP_EGU64x32_NOVM_LOOP(
-  {},
-  // This statement will be executed before the first execution
-  // of the loop, and only if the loop is going to be entered.
-  // We cannot use a block ( { ... } ) since we want the variables declared
-  // here to be visible in the loop block.
-  // We capture the "scalar", vs2's first element, by copy, even though
-  // the "no overlap" constraint means that vs2 should remain constant
-  // during the loop.
-  const uint32_t roundCnt = zimm5;,
-  {
-    // For VKECCAK
-    //  - vd contains the input state,
-    //  - vs2 contains the round index,
-    //  - vd does receive the output state.
-    //
-    // note that in the 32 elements of each EGU64x32 only the first 25
-    // elements are actually used (the Keccak state is 1600-bit wide)
-    EGU64x32_t keccak_state = P.VU.elt_group<EGU64x32_t>(vd_num, idx_eg);
+// The permutation is not element-restartable: a nonzero vstart is an illegal
+// instruction rather than a resumption point.
+require(P.VU.vstart->read() == 0);
 
-    // unpacking state
-    uint64_t A_0_0 = keccak_state[0 + 5 * 0];
-    uint64_t A_0_1 = keccak_state[0 + 5 * 1];
-    uint64_t A_0_2 = keccak_state[0 + 5 * 2];
-    uint64_t A_0_3 = keccak_state[0 + 5 * 3];
-    uint64_t A_0_4 = keccak_state[0 + 5 * 4];
-    uint64_t A_1_0 = keccak_state[1 + 5 * 0];
-    uint64_t A_1_1 = keccak_state[1 + 5 * 1];
-    uint64_t A_1_2 = keccak_state[1 + 5 * 2];
-    uint64_t A_1_3 = keccak_state[1 + 5 * 3];
-    uint64_t A_1_4 = keccak_state[1 + 5 * 4];
-    uint64_t A_2_0 = keccak_state[2 + 5 * 0];
-    uint64_t A_2_1 = keccak_state[2 + 5 * 1];
-    uint64_t A_2_2 = keccak_state[2 + 5 * 2];
-    uint64_t A_2_3 = keccak_state[2 + 5 * 3];
-    uint64_t A_2_4 = keccak_state[2 + 5 * 4];
-    uint64_t A_3_0 = keccak_state[3 + 5 * 0];
-    uint64_t A_3_1 = keccak_state[3 + 5 * 1];
-    uint64_t A_3_2 = keccak_state[3 + 5 * 2];
-    uint64_t A_3_3 = keccak_state[3 + 5 * 3];
-    uint64_t A_3_4 = keccak_state[3 + 5 * 4];
-    uint64_t A_4_0 = keccak_state[4 + 5 * 0];
-    uint64_t A_4_1 = keccak_state[4 + 5 * 1];
-    uint64_t A_4_2 = keccak_state[4 + 5 * 2];
-    uint64_t A_4_3 = keccak_state[4 + 5 * 3];
-    uint64_t A_4_4 = keccak_state[4 + 5 * 4];
-    // executed the number of requested keccak rounds
-    for (std::size_t ridx = 0; ridx < roundCnt; ++ridx) {
+// The fixed group spans NREG = ceil(EGW/VLEN) registers regardless of LMUL.
+// 'vd' must be aligned to an NREG-register boundary and the group must not
+// extend past v31.
+const reg_t vkeccak_nreg = (2048 + P.VU.VLEN - 1) / P.VU.VLEN;
+const reg_t vd_num = insn.rd();
+require_align(vd_num, vkeccak_nreg);
+require(vd_num + vkeccak_nreg <= (reg_t)NVPR);
+
+// imm5 selects the round count: 0 -> 24 rounds (Keccak-f[1600]),
+// 1 -> 12 rounds. Every other value is reserved. Keccak-p[1600, roundCnt]
+// uses round constants RC[24 - roundCnt] .. RC[23].
+const reg_t vkeccak_imm5 = insn.rs2();
+require(vkeccak_imm5 == 0 || vkeccak_imm5 == 1);
+const std::size_t roundCnt = (vkeccak_imm5 == 0) ? 24 : 12;
+const std::size_t rc_offset = 24 - roundCnt;
+
+// Read the 25 active state words of the fixed group. elt<uint64_t>(vd, i)
+// resolves element i to element position i mod (VLEN/64) of register
+// vd + floor(i/(VLEN/64)), which is exactly the layout the specification
+// defines, and it does not consult vl or LMUL.
+#define VKECCAK_A(x, y) (P.VU.elt<uint64_t>(vd_num, (x) + 5 * (y)))
+
+uint64_t A_0_0 = VKECCAK_A(0, 0);
+uint64_t A_0_1 = VKECCAK_A(0, 1);
+uint64_t A_0_2 = VKECCAK_A(0, 2);
+uint64_t A_0_3 = VKECCAK_A(0, 3);
+uint64_t A_0_4 = VKECCAK_A(0, 4);
+uint64_t A_1_0 = VKECCAK_A(1, 0);
+uint64_t A_1_1 = VKECCAK_A(1, 1);
+uint64_t A_1_2 = VKECCAK_A(1, 2);
+uint64_t A_1_3 = VKECCAK_A(1, 3);
+uint64_t A_1_4 = VKECCAK_A(1, 4);
+uint64_t A_2_0 = VKECCAK_A(2, 0);
+uint64_t A_2_1 = VKECCAK_A(2, 1);
+uint64_t A_2_2 = VKECCAK_A(2, 2);
+uint64_t A_2_3 = VKECCAK_A(2, 3);
+uint64_t A_2_4 = VKECCAK_A(2, 4);
+uint64_t A_3_0 = VKECCAK_A(3, 0);
+uint64_t A_3_1 = VKECCAK_A(3, 1);
+uint64_t A_3_2 = VKECCAK_A(3, 2);
+uint64_t A_3_3 = VKECCAK_A(3, 3);
+uint64_t A_3_4 = VKECCAK_A(3, 4);
+uint64_t A_4_0 = VKECCAK_A(4, 0);
+uint64_t A_4_1 = VKECCAK_A(4, 1);
+uint64_t A_4_2 = VKECCAK_A(4, 2);
+uint64_t A_4_3 = VKECCAK_A(4, 3);
+uint64_t A_4_4 = VKECCAK_A(4, 4);
+
+// The permutation itself. This round body is carried over verbatim from the
+// original implementation by Nicolas Brunie, and matches the pseudocode in
+// zvknhk.adoc.
+for (std::size_t ridx = 0; ridx < roundCnt; ++ridx) {
+
         uint64_t C_0= A_0_0 ^ A_0_1 ^ A_0_2 ^ A_0_3 ^ A_0_4;
         uint64_t C_1= A_1_0 ^ A_1_1 ^ A_1_2 ^ A_1_3 ^ A_1_4;
         uint64_t C_2= A_2_0 ^ A_2_1 ^ A_2_2 ^ A_2_3 ^ A_2_4;
@@ -217,38 +246,37 @@ VI_ZVK_VD_VS2_NOOPERANDS_PRELOOP_EGU64x32_NOVM_LOOP(
         A_2_4 = C_4_2 ^ (~C_4_3 & C_4_4);
         A_3_4 = C_4_3 ^ (~C_4_4 & C_4_0);
         A_4_4 = C_4_4 ^ (~C_4_0 & C_4_1);
-        /*ι*/ // XL(0,0,RC[i]);
-        A_0_0 ^= KECCAK_RC[ridx];
-    };
-    // epilog: populating back keccak state
-    keccak_state[0 + 5 * 0] = A_0_0;
-    keccak_state[0 + 5 * 1] = A_0_1;
-    keccak_state[0 + 5 * 2] = A_0_2;
-    keccak_state[0 + 5 * 3] = A_0_3;
-    keccak_state[0 + 5 * 4] = A_0_4;
-    keccak_state[1 + 5 * 0] = A_1_0;
-    keccak_state[1 + 5 * 1] = A_1_1;
-    keccak_state[1 + 5 * 2] = A_1_2;
-    keccak_state[1 + 5 * 3] = A_1_3;
-    keccak_state[1 + 5 * 4] = A_1_4;
-    keccak_state[2 + 5 * 0] = A_2_0;
-    keccak_state[2 + 5 * 1] = A_2_1;
-    keccak_state[2 + 5 * 2] = A_2_2;
-    keccak_state[2 + 5 * 3] = A_2_3;
-    keccak_state[2 + 5 * 4] = A_2_4;
-    keccak_state[3 + 5 * 0] = A_3_0;
-    keccak_state[3 + 5 * 1] = A_3_1;
-    keccak_state[3 + 5 * 2] = A_3_2;
-    keccak_state[3 + 5 * 3] = A_3_3;
-    keccak_state[3 + 5 * 4] = A_3_4;
-    keccak_state[4 + 5 * 0] = A_4_0;
-    keccak_state[4 + 5 * 1] = A_4_1;
-    keccak_state[4 + 5 * 2] = A_4_2;
-    keccak_state[4 + 5 * 3] = A_4_3;
-    keccak_state[4 + 5 * 4] = A_4_4;
+        /*iota*/
+        A_0_0 ^= KECCAK_RC[rc_offset + ridx];
+}
 
-    // Update the destination register.
-    EGU64x32_t &vd = P.VU.elt_group<EGU64x32_t>(vd_num, idx_eg, true);
-    EGU64x32_COPY(vd, keccak_state);
-  }
-);
+// Write back only the 25 state elements; 25..31 remain untouched.
+
+VKECCAK_A(0, 0) = A_0_0;
+VKECCAK_A(0, 1) = A_0_1;
+VKECCAK_A(0, 2) = A_0_2;
+VKECCAK_A(0, 3) = A_0_3;
+VKECCAK_A(0, 4) = A_0_4;
+VKECCAK_A(1, 0) = A_1_0;
+VKECCAK_A(1, 1) = A_1_1;
+VKECCAK_A(1, 2) = A_1_2;
+VKECCAK_A(1, 3) = A_1_3;
+VKECCAK_A(1, 4) = A_1_4;
+VKECCAK_A(2, 0) = A_2_0;
+VKECCAK_A(2, 1) = A_2_1;
+VKECCAK_A(2, 2) = A_2_2;
+VKECCAK_A(2, 3) = A_2_3;
+VKECCAK_A(2, 4) = A_2_4;
+VKECCAK_A(3, 0) = A_3_0;
+VKECCAK_A(3, 1) = A_3_1;
+VKECCAK_A(3, 2) = A_3_2;
+VKECCAK_A(3, 3) = A_3_3;
+VKECCAK_A(3, 4) = A_3_4;
+VKECCAK_A(4, 0) = A_4_0;
+VKECCAK_A(4, 1) = A_4_1;
+VKECCAK_A(4, 2) = A_4_2;
+VKECCAK_A(4, 3) = A_4_3;
+VKECCAK_A(4, 4) = A_4_4;
+
+#undef VKECCAK_A
+#undef KECCAK_ROL

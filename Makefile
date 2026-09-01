@@ -7,6 +7,7 @@
 #   make patch        — Patch zvknhk.adoc into the upstream manual sources
 #   make spike        — Build Spike (riscv-isa-sim) with the Zvknhk instruction
 #   make patch-spike  — Patch the Zvknhk instruction into the upstream Spike sources
+#   make unpatch-spike— Restore the Spike sources to pristine upstream
 #   make test         — Build and run the instruction tests under the built Spike
 #   make docker-pull  — Pull the RISC-V docs Docker image
 #   make install-deps — Install native build deps (Ubuntu/Debian, needs sudo)
@@ -38,7 +39,7 @@ SKIP_DOCKER ?= $(shell command -v docker >/dev/null 2>&1 && echo false || echo t
 MAKE_OPTS := SKIP_DOCKER=$(SKIP_DOCKER)
 
 .PHONY: all pdf html patch clean force-clean docker-pull install-deps submodule-init
-.PHONY: spike patch-spike test test-clean spike-clean sim-submodule-init
+.PHONY: spike patch-spike unpatch-spike test test-clean spike-clean sim-submodule-init
 
 # The PDF and HTML builds share riscv-isa-manual/build (and build/images-out),
 # so they must not run concurrently — force serial execution even under `make -j`.
@@ -106,6 +107,14 @@ install-deps:
 
 patch-spike: sim-submodule-init
 	./scripts/apply-spike-patch.sh
+
+# Restore the simulator sources to pristine upstream. Needed after changing
+# *what* apply-spike-patch.sh inserts: each site is guarded by a token that
+# only the patch introduces, so an already-patched file is skipped and would
+# otherwise keep the previous version of the insertion.
+unpatch-spike:
+	git -C $(SIM_DIR) checkout -- disasm/ riscv/
+	rm -f $(SIM_DIR)/riscv/insns/vkeccak_vi.h
 
 # Configure once, then build. Re-running is cheap; the configure step is
 # skipped when the build directory already has a Makefile.

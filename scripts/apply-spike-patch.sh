@@ -7,8 +7,14 @@ set -euo pipefail
 #
 #   1. Copy spike/vkeccak_vi.h into the simulator's riscv/insns/ directory.
 #   2. Insert the small amount of glue that registers the instruction: the
-#      EXT_ZVKK extension id, its ISA-string name ("zvkk"), the encoding,
-#      the build-system entry, and the required element-group macros.
+#      EXT_ZVKK extension id, its ISA-string name ("zvkk"), the encoding, the
+#      build-system entry, and the disassembler entry.
+#
+# The instruction body is self-contained: because zvknhk.adoc defines the state
+# as a single fixed element group that is not strip-mined, the implementation
+# needs neither the Zvk element-group loop macros nor a new element-group type,
+# so riscv/vector_unit.h, riscv/zvk_ext_macros.h and riscv/zvkned_ext_macros.h
+# are left untouched.
 #
 # Every edit is a pure insertion anchored on a nearby upstream line, and every
 # site is guarded by a token that only this patch introduces — so the script is
@@ -113,8 +119,19 @@ patch_file() {
 cat > "$BLOCKS/disasm.cc" <<'EOF'
 
   // Zvknhk (vkeccak.vi) -- applied by scripts/apply-spike-patch.sh
+  //
+  // The Zvknhk encoding carries imm5 in the vs2 field (bits 24:20), and the
+  // vs1 field is a fixed part of the opcode. The generic .vi helpers read the
+  // immediate from bits 19:15 and print a vs2 register, so using one here
+  // would render `vkeccak.vi vd, imm5` as `vkeccak.vi vd, v<imm5>, 18`.
   if (ext_enabled(EXT_ZVKK)) {
-    DEFINE_VECTOR_VIU(vkeccak_vi);
+    static struct : public arg_t {
+      std::string to_string(insn_t insn) const {
+        return std::to_string(insn.rs2());
+      }
+    } vkeccak_imm5;
+    add_insn(new disasm_insn_t("vkeccak.vi", match_vkeccak_vi, mask_vkeccak_vi,
+                               {&vd, &vkeccak_imm5}));
   }
 EOF
 
@@ -125,7 +142,7 @@ EOF
 
 cat > "$BLOCKS/encoding_match.h" <<'EOF'
 /* Zvknhk (vkeccak.vi) -- applied by scripts/apply-spike-patch.sh */
-#define MATCH_VKECCAK_VI 0xa608a077
+#define MATCH_VKECCAK_VI 0xa6092077
 #define MASK_VKECCAK_VI 0xfe0ff07f
 EOF
 
@@ -145,76 +162,6 @@ printf '%s\n' \
     '' > "$BLOCKS/riscv.mk.in.list"
 
 printf '%s\n' "$(printf '\t$(riscv_insn_ext_zvkk) \\')" > "$BLOCKS/riscv.mk.in.use"
-
-cat > "$BLOCKS/vector_unit.h" <<'EOF'
-
-// Element Group of 32 64 bits elements (2048b total).
-// Zvknhk (vkeccak.vi) -- applied by scripts/apply-spike-patch.sh
-using EGU64x32_t = std::array<uint64_t, 32>;
-EOF
-
-cat > "$BLOCKS/zvk_ext_macros.h" <<'EOF'
-// Zvknhk (vkeccak.vi) -- applied by scripts/apply-spike-patch.sh
-
-#define require_zvkk \
-  do { \
-    require_vector(true); \
-    require_extension(EXT_ZVKK); \
-  } while (0)
-
-// Checks that the vector unit state (vtype and vl) can be interpreted
-// as element groups with EEW=64, EGS=32 (thirty-two 64-bits elements per
-// group), for an effective element group width of EGW=2048 bits.
-#define require_element_groups_64x32 \
-  do { \
-    /* 'vstart' must be a multiple of EGS */ \
-    const reg_t vstart = P.VU.vstart->read(); \
-    require(vstart % 32 == 0); \
-    /* 'vl' must be a multiple of EGS */ \
-    const reg_t vl = P.VU.vl->read(); \
-    require(vl % 32 == 0); \
-  } while (0)
-
-// VECTOR KECCAK SPECIFIC MACRO
-#define VI_ZVK_VD_VS2_NOOPERANDS_PRELOOP_EGU64x32_NOVM_LOOP(PRELUDE, \
-                                                        PRELOOP, \
-                                                        EG_BODY) \
-  do { \
-    require_element_groups_64x32; \
-    require_no_vmask; \
-    const reg_t vd_num = insn.rd(); \
-    const reg_t zimm5 = insn.rs2(); \
-    const reg_t vstart_eg = P.VU.vstart->read() / 32; \
-    const reg_t vl_eg = P.VU.vl->read() / 32; \
-    do { PRELUDE } while (0); \
-    if (vstart_eg < vl_eg) { \
-      PRELOOP \
-      for (reg_t idx_eg = vstart_eg; idx_eg < vl_eg; ++idx_eg) { \
-        EG_BODY \
-      } \
-    } \
-    P.VU.vstart->write(0); \
-  } while (0)
-
-// Copies a EGU64x32_t value from 'SRC' into 'DST'.
-#define EGU64x32_COPY(DST, SRC) \
-  for (std::size_t bidx = 0; bidx < 32; ++bidx) { \
-    (DST)[bidx] = (SRC)[bidx]; \
-  }
-
-EOF
-
-cat > "$BLOCKS/zvkned_ext_macros.h" <<'EOF'
-
-// vkeccak.vi instruction constraints (Zvknhk).
-// Applied by scripts/apply-spike-patch.sh
-#define require_vkeccak_vi_constraints \
-  do { \
-    require_zvkk; \
-    require(P.VU.vsew == 64); \
-    require_egw_fits(2048); \
-  } while (false)
-EOF
 
 # ------------------------------------------------------------------ apply ---
 
@@ -251,24 +198,11 @@ patch_file riscv/riscv.mk.in after \
     '$(riscv_insn_ext_zicfiss) \' - \
     '$(riscv_insn_ext_zvkk)' "$BLOCKS/riscv.mk.in.use"
 
-patch_file riscv/vector_unit.h after \
-    'using EGU8x16_t = std::array<uint8_t, 16>;' - \
-    'EGU64x32_t' "$BLOCKS/vector_unit.h"
-
-patch_file riscv/zvk_ext_macros.h before \
-    '#endif  // RISCV_ZVK_EXT_MACROS_H_' - \
-    'require_zvkk' "$BLOCKS/zvk_ext_macros.h"
-
-patch_file riscv/zvkned_ext_macros.h after_term \
-    '    require_noover_eglmul(insn.rd(), insn.rs2()); \' '} while (false)' \
-    'require_vkeccak_vi_constraints' "$BLOCKS/zvkned_ext_macros.h"
-
 # The disassembler entry goes next to the other Zvk* blocks. The upstream fork
-# nested it inside `if (ext_enabled(EXT_ZICFISS))`, which meant vkeccak.vi only
-# disassembled when Zicfiss happened to be enabled too — not the case for the
-# documented test ISA string. Anchor on the Zvksh block instead.
+# nested it inside `if (ext_enabled(EXT_ZICFISS))`, which only shows up under
+# `spike-dasm --strict` but is wrong regardless. Anchor on the Zvksh block.
 patch_file disasm/disasm.cc after_term \
     '    DEFINE_VECTOR_VV(vsm3me_vv);' '  }' \
-    'DEFINE_VECTOR_VIU(vkeccak_vi)' "$BLOCKS/disasm.cc"
+    'vkeccak_imm5' "$BLOCKS/disasm.cc"
 
 echo "==> Patch applied."

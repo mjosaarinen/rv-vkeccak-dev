@@ -13,6 +13,7 @@ void hex(const char *lab, const void *dat, size_t len)
 }
 
 int test_sha3();
+int test_turbo();
 int rij256_test();
 
 int main()
@@ -43,6 +44,7 @@ int main()
     printf("%24s = %lu\n", "instret",   plat_get_instret());
 
     fail += test_sha3();
+    fail += test_turbo();
 
     printf("[INFO] fail= %d\n", fail);
 
