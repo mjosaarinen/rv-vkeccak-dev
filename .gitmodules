@@ -5,3 +5,10 @@
 	# which dirties the submodule work tree. Ignore that so `git status` stays clean;
 	# a changed pinned commit still shows up.
 	ignore = dirty
+[submodule "riscv-isa-sim"]
+	path = riscv-isa-sim
+	url = https://github.com/riscv-software-src/riscv-isa-sim.git
+	# The build patches the Zvknhk instruction into riscv/ and disasm/ in place
+	# (see scripts/apply-spike-patch.sh), which dirties the submodule work tree.
+	# Ignore that so `git status` stays clean; a changed pinned commit still shows.
+	ignore = dirty
