@@ -194,7 +194,6 @@ for (std::size_t ridx = 0; ridx < roundCnt; ++ridx) {
         A_4_1 = KECCAK_ROL(T_21, 61);
         uint64_t T_23 = A_1_1;
         A_1_1 = KECCAK_ROL(T_22, 20);
-        uint64_t T_24 = A_1_0;
         A_1_0 = KECCAK_ROL(T_23, 44);
         uint64_t C_0_0 = A_0_0;
         uint64_t C_0_1 = A_1_0;

@@ -145,26 +145,25 @@ The assembler does not know `vkeccak.vi` yet, so `keccak_insn.c` emits it with
 `.insn`:
 
 ```C
-void keccak_f1600(void *state)
-{
     __asm volatile (
         "vsetivli x0, 25, e64, m8, tu, mu\n"
-        "vle64.v v8, 0(%[state])\n"
-        //  vkeccak.vi v8, 0   -- imm5 = 0 selects 24 rounds (Keccak-f[1600])
+        "vle64.v v0, 0(%[s])\n"
+        //  vkeccak.vi v0, 0   -- imm5 = 0 selects 24 rounds (Keccak-f[1600])
         //  .insn r opc, func3, func7, rd, rs1, rs2
-        ".insn r 0x77, 0x2, 0x53, x8, x18, x0\n"
-        "vse64.v v8, 0(%[state])\n"
+        ".insn r 0x77, 0x2, 0x53, x0, x18, x0\n"
+        "vse64.v v0, 0(%[s])\n"
         :
-        : [state]"r"(state)
+        : [s]"r"(state)
         : "memory"
     );
-}
 ```
 
-The 25 state lanes are loaded into `v8`, the permutation runs in place, and the
-lanes are stored back. The state is a single fixed element group of `EGW=2048`
-bits designated by `vd`, independent of `vl` and `LMUL`, so `vl` only has to be
-large enough for the surrounding `vle64.v` / `vse64.v` of the 25 active words.
+That is the `VLEN >= 256` arm of the `KECCAK_INSN` macro; the `VLEN = 128` arm
+splits the transfer in two, as described above. The 25 state lanes are loaded
+into `v0`, the permutation runs in place, and the lanes are stored back. The
+state is a single fixed element group of `EGW=2048` bits designated by `vd`,
+independent of `vl` and `LMUL`, so `vl` only has to be large enough for the
+surrounding `vle64.v` / `vse64.v` of the 25 active words.
 
 Reading the operands of that `.insn` needs care, because only two of the five
 R-type fields are actually operands:
@@ -172,7 +171,7 @@ R-type fields are actually operands:
 | Field | In the example | Meaning |
 |---|---|---|
 | `opc`, `func3`, `func7` | `0x77`, `0x2`, `0x53` | fixed opcode bits |
-| `rd` | `x8` | `vd` — the vector register holding the state, here `v8` |
+| `rd` | `x0` | `vd` — the vector register holding the state, here `v0` |
 | `rs1` | `x18` | **not an operand**; `0b10010` is a fixed part of the encoding |
 | `rs2` | `x0` | `imm5`, the round-count selector |
 
@@ -191,11 +190,11 @@ All other values are reserved and raise an illegal-instruction exception, as do
 `keccak_f1600()` uses `imm5 = 0` and `keccak_p1600_12()` uses `imm5 = 1`; both
 are covered by the vectors above.
 
-Assembled, the example above is `0xa6092477`, and a patched Spike disassembles
+Assembled, the example above is `0xa6092077`, and a patched Spike disassembles
 it as:
 
 ```
-core   0: 0x0000000000010406 (0xa6092477) vkeccak.vi v8, 0
+core   0: 0x000000000001047c (0xa6092077) vkeccak.vi v0, 0
 ```
 
 ##  Expected output

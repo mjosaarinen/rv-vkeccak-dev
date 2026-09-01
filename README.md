@@ -89,8 +89,9 @@ you, not root.
 
 ## Build — native (fallback)
 
-A native build needs no root and no 3.5 GB image. Two things bite on current
-Debian, and both are about *which* Asciidoctor you end up running:
+A native build needs no root and no 3.5 GB image. Three things bite on current
+Debian. The first two are about *which* Asciidoctor you end up running; the
+third is about a gem that will not install without root unless you pin it:
 
 - **Gems stranded by a Ruby upgrade.** Debian 13 moved to `ruby3.3`, leaving
   gems installed under Debian 12 behind in `/var/lib/gems/3.1.0`. The
@@ -107,15 +108,36 @@ Debian, and both are about *which* Asciidoctor you end up running:
   precedes the per-user gem bindir — so a fresh `--user-install` is shadowed by
   the broken one until you put the gem bindir first.
 
+- **`rouge` 5.x needs a compiler and Ruby headers.** The manual sets
+  `:source-highlighter: rouge`, and rouge 5 requires `strscan ~> 3.1`, which is
+  a native gem. Ruby 3.3 bundles only `strscan` 3.0.9, so RubyGems tries to
+  build 3.1.x and fails without the Ruby development headers:
+
+  ```
+  mkmf.rb can't find header files for ruby at /usr/lib/ruby/include/ruby.h
+  ```
+
+  The gem still installs, but the build then dies on `Unable to activate
+  rouge-5.1.0, because strscan-3.0.9 conflicts with strscan (~> 3.1)` — and,
+  confusingly, on `cannot load such file -- asciidoctor-sail`, which loads
+  rouge internally. Pinning rouge below 5 avoids the native build entirely;
+  installing `ruby-dev` (needs root) is the other way out.
+
 Install the gems for the current Ruby, no `sudo` needed:
 
 ```bash
 gem install --user-install --no-document \
     asciidoctor asciidoctor-bibtex asciidoctor-diagram asciidoctor-lists \
     asciidoctor-pdf asciidoctor-sail asciidoctor-diagram-ditaamini \
-    citeproc-ruby coderay csl-styles json rghost rouge
-npm install -g wavedrom-cli bytefield-svg          # diagram CLIs
+    citeproc-ruby coderay csl-styles rghost
+gem install --user-install --no-document rouge -v 4.5.2   # see the note above
+npm install -g wavedrom-cli bytefield-svg                 # diagram CLIs
 ```
+
+`npm install -g` needs a user-writable prefix; if it wants root, point it at
+one with `npm config set prefix ~/.npm-global` and put `~/.npm-global/bin` on
+`PATH`. `json` is not in the list: it is a default gem, and asking for it
+explicitly triggers the same native build that rouge 5 does.
 
 Put the gem bindir ahead of `/usr/local/bin`, then build:
 
@@ -359,6 +381,10 @@ variables at the top of it.
   the source of truth for the simulator, edit it here
 - `test/` -- instruction tests: SHA-3 / SHAKE (24 rounds) and TurboSHAKE
   (12 rounds) known-answer vectors
+- `riscv-spec.pdf` -- a checked-in render of the manual with the chapter
+  included. A snapshot, not a build artifact: it is `Version 20260716`, older
+  than the currently pinned upstream, so rebuild rather than cite it
+- `misc/rfc9861.txt` -- RFC 9861, the source of the TurboSHAKE test vectors
 - `scripts/apply-patch.sh` -- Layers `zvknhk.adoc` onto the upstream manual sources
 - `scripts/apply-spike-patch.sh` -- Layers the Zvknhk instruction onto the
   upstream Spike sources
