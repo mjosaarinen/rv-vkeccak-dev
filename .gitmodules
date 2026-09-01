@@ -12,3 +12,10 @@
 	# (see scripts/apply-spike-patch.sh), which dirties the submodule work tree.
 	# Ignore that so `git status` stays clean; a changed pinned commit still shows.
 	ignore = dirty
+[submodule "qemu-src"]
+	path = qemu-src
+	url = https://gitlab.com/qemu-project/qemu.git
+	# The build patches the Zvknhk instruction into target/riscv/ in place
+	# (see scripts/apply-qemu-patch.sh), which dirties the submodule work tree.
+	# Ignore that so `git status` stays clean; a changed pinned commit still shows.
+	ignore = dirty

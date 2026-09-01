@@ -10,6 +10,12 @@
 #   make unpatch-spike— Restore the Spike sources to pristine upstream
 #   make test         — Build and run the instruction tests under the built Spike
 #   make test-all     — Run the tests at every VLEN the spec tabulates (128..2048)
+#   make qemu         — Build QEMU (qemu-src) with the Zvknhk instruction
+#   make patch-qemu   — Patch the Zvknhk instruction into the upstream QEMU sources
+#   make unpatch-qemu — Restore the QEMU sources to pristine upstream
+#   make test-qemu    — Build and run the instruction tests under the built QEMU
+#   make test-qemu-all— Run the tests under QEMU at every VLEN it supports
+#   make boot-qemu    — Boot the system-mode smoke test on qemu-system-riscv64
 #   make docker-pull  — Pull the RISC-V docs Docker image
 #   make install-deps — Install native build deps (Ubuntu/Debian, needs sudo)
 #   make clean        — Remove build artifacts
@@ -26,7 +32,17 @@ BUILD_DIR  := $(MANUAL_DIR)/build
 SIM_DIR    := riscv-isa-sim
 SIM_BUILD  := $(SIM_DIR)/build
 SPIKE_BIN  := $(SIM_BUILD)/spike
+QEMU_DIR   := qemu-src
+QEMU_BUILD := $(QEMU_DIR)/build
+QEMU_USER  := $(QEMU_BUILD)/qemu-riscv64
+QEMU_SYS   := $(QEMU_BUILD)/qemu-system-riscv64
 TEST_DIR   := test
+
+# QEMU targets. riscv64-linux-user runs RISC-V Linux binaries, static and
+# dynamic alike; riscv64-softmmu is full-system emulation, for booting a
+# kernel. Override QEMU_TARGETS to build just one of them.
+QEMU_TARGETS ?= riscv64-linux-user,riscv64-softmmu
+QEMU_CONFIG_FLAGS ?= --target-list=$(QEMU_TARGETS) --disable-docs --disable-werror
 
 # Parallelism for the Spike build (the ISA manual build is not parallelisable).
 NPROC ?= $(shell nproc 2>/dev/null || echo 4)
@@ -41,6 +57,8 @@ MAKE_OPTS := SKIP_DOCKER=$(SKIP_DOCKER)
 
 .PHONY: all pdf html patch clean force-clean docker-pull install-deps submodule-init
 .PHONY: spike patch-spike unpatch-spike test test-all test-clean spike-clean sim-submodule-init
+.PHONY: qemu patch-qemu unpatch-qemu qemu-clean qemu-submodule-init test-qemu test-qemu-all
+.PHONY: boot-qemu boot-qemu-all
 
 # The PDF and HTML builds share riscv-isa-manual/build (and build/images-out),
 # so they must not run concurrently — force serial execution even under `make -j`.
@@ -82,7 +100,7 @@ clean:
 	rm -rf $(MANUAL_DIR)/dependencies/node_modules
 	rm -f $(MANUAL_DIR)/dependencies/Gemfile.lock
 	rm -f $(MANUAL_DIR)/dependencies/package-lock.json
-	$(MAKE) spike-clean test-clean
+	$(MAKE) spike-clean qemu-clean test-clean
 
 # Recovery target: a Docker build that ran without --user (or a mis-mounted one)
 # can leave build files owned by root that `clean` can't remove without sudo.
@@ -145,3 +163,59 @@ spike-clean:
 
 test-clean:
 	$(MAKE) -C $(TEST_DIR) clean
+
+# --- QEMU (qemu-src) --------------------------------------------------------
+#
+# Same pattern again: QEMU is a pristine upstream submodule and
+# scripts/apply-qemu-patch.sh layers the Zvknhk instruction onto it. The patch
+# is idempotent, so it is safe to re-run on every build. See qemu/README.md
+# for what it inserts and where.
+
+qemu-submodule-init:
+	@if [ ! -f $(QEMU_DIR)/target/riscv/insn32.decode ]; then \
+		echo "Initializing the $(QEMU_DIR) submodule..."; \
+		git submodule update --init --recursive $(QEMU_DIR); \
+	fi
+
+patch-qemu: qemu-submodule-init
+	./scripts/apply-qemu-patch.sh
+
+# Restore the QEMU sources to pristine upstream. Needed after changing *what*
+# apply-qemu-patch.sh inserts: each site is guarded by a token that only the
+# patch introduces, so an already-patched file is skipped and would otherwise
+# keep the previous version of the insertion.
+unpatch-qemu:
+	git -C $(QEMU_DIR) checkout -- target/riscv/
+	rm -f $(QEMU_DIR)/target/riscv/tcg/vkeccak_vi.c.inc
+	rm -f $(QEMU_DIR)/target/riscv/tcg/insn_trans/trans_vkeccak_vi.c.inc
+
+# Configure once, then build. Re-running is cheap; the configure step is
+# skipped when the build directory already has a build.ninja.
+qemu: patch-qemu
+	@mkdir -p $(QEMU_BUILD)
+	@if [ ! -f $(QEMU_BUILD)/build.ninja ]; then \
+		echo "==> Configuring QEMU..."; \
+		cd $(QEMU_BUILD) && ../configure $(QEMU_CONFIG_FLAGS); \
+	fi
+	@echo "==> Building QEMU (-j$(NPROC))..."
+	$(MAKE) -C $(QEMU_BUILD) -j$(NPROC)
+	@echo -e '\n  Built $(QEMU_USER)\n        $(QEMU_SYS)\n'
+
+# Run the instruction tests under the QEMU we just built, rather than Spike.
+test-qemu: qemu
+	$(MAKE) -C $(TEST_DIR) run-qemu QEMU=$(abspath $(QEMU_USER))
+
+test-qemu-all: qemu
+	$(MAKE) -C $(TEST_DIR) run-qemu-all QEMU=$(abspath $(QEMU_USER))
+
+# The same instruction in full-system emulation: a freestanding payload booted
+# on the 'virt' machine with no proxy kernel and no firmware.
+boot-qemu: qemu
+	$(MAKE) -C $(TEST_DIR)/system boot QEMU=$(abspath $(QEMU_SYS))
+
+boot-qemu-all: qemu
+	$(MAKE) -C $(TEST_DIR)/system boot-all QEMU=$(abspath $(QEMU_SYS))
+
+qemu-clean:
+	rm -rf $(QEMU_BUILD)
+	$(MAKE) -C $(TEST_DIR)/system clean

@@ -22,9 +22,28 @@ SPIKE	?=	../riscv-isa-sim/build/spike
 #	The proxy kernel that the test binary runs under.
 PK		?=	$(RISCV)/riscv64-unknown-linux-gnu/bin/pk
 
+#	QEMU built by `make qemu` in the repo root; override to use another build.
+#	This is user-mode QEMU, which runs the binary directly -- no proxy kernel.
+QEMU	?=	../qemu-src/build/qemu-riscv64
+#	Interpreter prefix, so that dynamically linked RISC-V binaries resolve
+#	their loader and libraries. Harmless for the static binary built here.
+QEMU_SYSROOT ?= $(SYSROOT)
+
+#	QEMU caps VLEN at RV_VLEN_MAX, which upstream currently sets to 1024, so
+#	the 2048 row of the specification's table cannot be exercised here.
+QEMUVLENS =	128 256 512 1024
+
 SPIKEFL	=	--isa=rv64gcv_zvl$(VLEN)b_zvknhk_zicntr_zihpm
+QEMUFL	=	-L $(QEMU_SYSROOT) \
+			-cpu rv64,v=true,vlen=$(VLEN),elen=64,zvknhk=true,zicntr=true,zihpm=true
+#	Target sysroot. Note this is $(RISCV)/sysroot, not $(RISCV)/sysroot/usr:
+#	the loader and the shared libc live in <sysroot>/lib, so pointing one
+#	level too deep still links -static (libc.a is found as <sysroot>/lib) but
+#	makes a dynamic link fail to find ld-linux-riscv64-lp64d.so.1.
+SYSROOT	?=	$(RISCV)/sysroot
+
 CFLAGS	=	-march=$(RVKISA) -mabi=lp64d -Wall
-LDFLAGS	=	-static --sysroot=$(RISCV)/sysroot/usr
+LDFLAGS	=	-static --sysroot=$(SYSROOT)
 CSRC	= 	$(wildcard *.c)
 SSRC	= 	$(wildcard *.s *.S)
 OBJS	=	$(CSRC:.c=.o) $(SSRC:.s=.o)
@@ -66,8 +85,49 @@ run-all: $(XBIN)
 	[ $$rc -eq 0 ] || echo "run-all: FAILED"; \
 	exit $$rc
 
+#	The same suite under user-mode QEMU instead of Spike.
+run-qemu: $(XBIN)
+	$(QEMU) $(QEMUFL) $(XBIN)
+
+#	The VLEN sweep under QEMU. Same four checks as run-all: that the emulator
+#	exited cleanly, that it really ran at the VLEN we asked for, that no vector
+#	reported a failure, and that vectors actually ran at all.
+run-qemu-all: $(XBIN)
+	@rc=0; \
+	for v in $(QEMUVLENS); do \
+		out=`$(QEMU) -L $(QEMU_SYSROOT) \
+			-cpu rv64,v=true,vlen=$${v},elen=64,zvknhk=true,zicntr=true,zihpm=true \
+			$(XBIN) 2>&1`; \
+		st=$$?; \
+		got=`printf '%s\n' "$$out" | sed -n 's/^ *vlen *= *//p'`; \
+		bad=`printf '%s\n' "$$out" | sed -n 's/^\[INFO\] fail= *//p'`; \
+		ran=`printf '%s\n' "$$out" | grep -c '^\[PASS\]'`; \
+		if [ $$st -ne 0 ]; then \
+			echo "VLEN=$$v FAIL: qemu exited $$st"; rc=1; \
+		elif [ "$$got" != "$$v" ]; then \
+			echo "VLEN=$$v FAIL: ran at vlen=$${got:-unknown}"; rc=1; \
+		elif [ "$$bad" != "0" ]; then \
+			echo "VLEN=$$v FAIL: $${bad:-no} vector failure count"; rc=1; \
+		elif [ $$ran -eq 0 ]; then \
+			echo "VLEN=$$v FAIL: no vectors ran"; rc=1; \
+		else \
+			echo "VLEN=$$v ok: $$ran vectors"; \
+		fi; \
+	done; \
+	[ $$rc -eq 0 ] || echo "run-qemu-all: FAILED"; \
+	exit $$rc
+
 $(XBIN): $(OBJS) Makefile
 	$(CC) $(LDFLAGS) $(CFLAGS) -o $(XBIN) $(OBJS) $(LDLIBS)
+
+#	A dynamically linked build of the same suite. Spike's proxy kernel runs
+#	static binaries only, so this one exists for QEMU user-mode emulation,
+#	which resolves the loader and libc through -L $(QEMU_SYSROOT).
+$(XBIN)-dyn: $(OBJS) Makefile
+	$(CC) --sysroot=$(SYSROOT) $(CFLAGS) -o $(XBIN)-dyn $(OBJS) $(LDLIBS)
+
+run-qemu-dyn: $(XBIN)-dyn
+	$(QEMU) $(QEMUFL) $(XBIN)-dyn
 
 %.o:	%.c
 	$(CC) $(CFLAGS) -c $< -o $@

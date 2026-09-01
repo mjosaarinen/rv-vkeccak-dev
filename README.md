@@ -14,12 +14,13 @@ of the official RISC-V ISA manual so it can be reviewed as a normative document.
 
 Do **not** edit the generated copy at `riscv-isa-manual/src/unpriv/zvknhk.adoc`.
 
-Alongside the specification there is a reference implementation of the
-instruction for Spike, the RISC-V ISA simulator, in
-[`spike/vkeccak_vi.h`](spike/vkeccak_vi.h), and a test suite in
-[`test/`](test/) that checks it against SHA-3 and SHAKE known-answer vectors.
-Both upstreams — the ISA manual and Spike — are pristine submodules that get
-patched at build time; the editable sources live here in the repo root.
+Alongside the specification there are two reference implementations of the
+instruction — for Spike, the RISC-V ISA simulator, in
+[`spike/vkeccak_vi.h`](spike/vkeccak_vi.h), and for QEMU in
+[`qemu/`](qemu/README.md) — and a test suite in [`test/`](test/) that checks
+them against SHA-3 and SHAKE known-answer vectors. All three upstreams — the
+ISA manual, Spike and QEMU — are pristine submodules that get patched at build
+time; the editable sources live here in the repo root.
 
 
 ## Getting the sources
@@ -36,12 +37,13 @@ also pulls the manual's own `docs-resources` submodule):
 git submodule update --init --recursive
 ```
 
-There are two submodules, both tracking pristine upstream:
+There are three submodules, all tracking pristine upstream:
 
 | Submodule | Upstream | Pinned at | Patched by |
 |---|---|---|---|
 | `riscv-isa-manual` | `github.com/riscv/riscv-isa-manual` | `e5c0c60f` | `scripts/apply-patch.sh` |
 | `riscv-isa-sim` | `github.com/riscv-software-src/riscv-isa-sim` | `549da3fa` | `scripts/apply-spike-patch.sh` |
+| `qemu-src` | `gitlab.com/qemu-project/qemu` | `d2e570cc` | `scripts/apply-qemu-patch.sh` |
 
 The pinned revisions are whatever `git submodule status` reports; the table
 records the ones this documentation was written against.
@@ -52,6 +54,7 @@ local remote has drifted off upstream — check it:
 ```bash
 git -C riscv-isa-manual remote -v      # must be riscv/riscv-isa-manual
 git -C riscv-isa-sim    remote -v      # must be riscv-software-src/riscv-isa-sim
+git -C qemu-src         remote -v      # must be qemu-project/qemu
 ```
 
 Either way, `make pdf`/`make html` run `make patch` first, which copies
@@ -258,6 +261,42 @@ two months later because they insert lines into long, churning lists. If an
 anchor ever disappears, the script fails loudly naming the file — update the
 anchor rather than force the patch.
 
+## Build — QEMU
+
+`qemu-src` is a pristine upstream QEMU checkout, and
+`scripts/apply-qemu-patch.sh` layers the Zvknhk instruction onto it in exactly
+the same anchor-based way as the Spike patch. `make qemu` runs the patch,
+configures once, and builds:
+
+```bash
+make qemu            # -> qemu-src/build/qemu-riscv64
+                     #    qemu-src/build/qemu-system-riscv64
+make patch-qemu      # apply the patch only
+make unpatch-qemu    # restore qemu-src to pristine upstream
+make qemu-clean      # remove qemu-src/build
+```
+
+Two targets are built: `riscv64-linux-user`, which runs RISC-V Linux binaries
+directly — static and dynamically linked alike, no proxy kernel — and
+`riscv64-softmmu` for full-system emulation. Override `QEMU_TARGETS` to build
+just one. The build needs QEMU's own dependencies (a C compiler, Python, Ninja,
+glib); it bootstraps Meson itself into a private venv.
+
+Because `zvknhk` implies `zve64x`, it is enough on its own in the CPU string:
+
+```bash
+qemu-src/build/qemu-riscv64 -cpu rv64,zvknhk=true,vlen=256 test/xtest
+```
+
+**[`qemu/README.md`](qemu/README.md) is the writeup of how the instruction is
+wired in** — the two `.c.inc` files that hold it, the nine insertion sites, why
+none of QEMU's strip-mining scaffolding applies to a fixed element group, and
+where each reserved encoding is enforced.
+
+Note that QEMU caps VLEN at `RV_VLEN_MAX`, currently 1024, so the `VLEN >= 2048`
+row of the specification's table cannot be exercised there; Spike has no such
+cap.
+
 ## Tests
 
 `test/` holds the instruction test suite. It builds a static RISC-V binary and
@@ -276,6 +315,17 @@ total.
 ```bash
 make test            # builds spike if needed, then builds and runs the tests
 make test-all        # the same, at every VLEN the spec tabulates (128..2048)
+```
+
+The same suite runs under QEMU instead of Spike, plus a full-system smoke test
+that boots with no proxy kernel and no firmware:
+
+```bash
+make test-qemu       # the suite under user-mode QEMU
+make test-qemu-all   # at every VLEN QEMU supports (128..1024)
+make boot-qemu       # system-mode: boot test/system/ on qemu-system-riscv64
+make boot-qemu-all   # the same, at every VLEN QEMU supports
+make -C test run-qemu-dyn   # a dynamically linked build of the same suite
 ```
 
 The fixed element group spans `NREG = ceil(2048/VLEN)` registers, so both its
@@ -388,7 +438,13 @@ variables at the top of it.
 - `scripts/apply-patch.sh` -- Layers `zvknhk.adoc` onto the upstream manual sources
 - `scripts/apply-spike-patch.sh` -- Layers the Zvknhk instruction onto the
   upstream Spike sources
+- **`qemu/`** -- the instruction's reference semantics for QEMU, and
+  [`qemu/README.md`](qemu/README.md), the writeup of how it is wired in
+- `test/system/` -- a full-system smoke test booted on qemu-system-riscv64
+- `scripts/apply-qemu-patch.sh` -- Layers the Zvknhk instruction onto the
+  upstream QEMU sources
 - `riscv-isa-manual/` -- Pristine upstream RISC-V ISA manual (submodule; itself
   has a `docs-resources` submodule)
 - `riscv-isa-sim/` -- Pristine upstream Spike / RISC-V ISA simulator (submodule)
+- `qemu-src/` -- Pristine upstream QEMU (submodule)
 - `scripts/` -- Helper scripts for dependency installation and Docker builds
