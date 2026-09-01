@@ -51,7 +51,7 @@ static constexpr uint64_t KECCAK_RC[24] = {
 
 // Reserved encodings (zvknhk.adoc, "Reserved Encodings").
 require_vector(true);
-require_extension(EXT_ZVKK);
+require_extension(EXT_ZVKNHK);
 require(P.VU.vsew == 64);             // SEW other than 64 is reserved
 require(insn.v_vm() == 1);            // vm=0 is reserved
 

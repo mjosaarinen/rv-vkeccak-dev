@@ -15,7 +15,7 @@ SPIKE	?=	../riscv-isa-sim/build/spike
 #	The proxy kernel that the test binary runs under.
 PK		?=	$(RISCV)/riscv64-unknown-linux-gnu/bin/pk
 
-SPIKEFL	=	--isa=$(RVKISA)_zvkk_zicntr_zihpm
+SPIKEFL	=	--isa=$(RVKISA)_zvknhk_zicntr_zihpm
 CFLAGS	=	-march=$(RVKISA) -mabi=lp64d -Wall
 LDFLAGS	=	-static --sysroot=$(RISCV)/sysroot/usr
 CSRC	= 	$(wildcard *.c)

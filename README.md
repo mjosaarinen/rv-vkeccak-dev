@@ -38,10 +38,13 @@ git submodule update --init --recursive
 
 There are two submodules, both tracking pristine upstream:
 
-| Submodule | Upstream | Patched by |
-|---|---|---|
-| `riscv-isa-manual` | `github.com/riscv/riscv-isa-manual` | `scripts/apply-patch.sh` |
-| `riscv-isa-sim` | `github.com/riscv-software-src/riscv-isa-sim` | `scripts/apply-spike-patch.sh` |
+| Submodule | Upstream | Pinned at | Patched by |
+|---|---|---|---|
+| `riscv-isa-manual` | `github.com/riscv/riscv-isa-manual` | `e5c0c60f` | `scripts/apply-patch.sh` |
+| `riscv-isa-sim` | `github.com/riscv-software-src/riscv-isa-sim` | `549da3fa` | `scripts/apply-spike-patch.sh` |
+
+The pinned revisions are whatever `git submodule status` reports; the table
+records the ones this documentation was written against.
 
 If a submodule checkout ever fails to find the pinned commit, that submodule's
 local remote has drifted off upstream — check it:
@@ -172,20 +175,57 @@ The build needs a C++20 compiler, Boost (`libboost-dev`, regex + system),
 as upstream Spike; see its README. `make spike` builds with `-j$(nproc)`;
 override with `NPROC=`.
 
-The patch adds one extension, `zvkk`, which gates the instruction. Enable it in
+The patch adds one extension, `zvknhk`, which gates the instruction. Enable it in
 the ISA string:
 
 ```bash
-riscv-isa-sim/build/spike --isa=rv64gcv_zvl256b_zvkk_zicntr_zihpm pk <binary>
+riscv-isa-sim/build/spike --isa=rv64gcv_zvl256b_zvknhk_zicntr_zihpm pk <binary>
 ```
+
+Per `zvknhk.adoc`, `Zvknhk` depends on `Zve64x` and needs `VLEN >= 128`, so
+the registration declares both as implied and `--isa=rv64i_zvknhk` pulls them
+in rather than being accepted as a vector-less string. An explicitly requested
+`zvl` still wins, since the implied `zvl128b` only raises `VLEN`. Note this
+makes `zvknhk` stricter than upstream's other `zvk*` extensions, which declare
+no implications.
 
 ### What the patch does
 
 `spike/vkeccak_vi.h` is the instruction semantics and the thing to edit. The
-rest is glue that the script inserts into upstream files: the `EXT_ZVKK`
-extension id, the `"zvkk"` ISA-string name, the `MATCH`/`MASK` encoding and its
-`DECLARE_INSN`, a `riscv_insn_ext_zvkk` build-system entry, the `EGU64x32_t`
-element-group type, and the element-group/constraint macros.
+rest is glue that the script inserts into five upstream files: the `EXT_ZVKNHK`
+extension id, the `"zvknhk"` ISA-string name, the `MATCH`/`MASK` encoding and
+its `DECLARE_INSN`, a `riscv_insn_ext_zvknhk` build-system entry, and the
+disassembler entry.
+
+Because `zvknhk.adoc` defines the state as a single fixed element group that is
+not strip-mined, the implementation needs neither the Zvk element-group loop
+macros nor a new element-group type. `riscv/vector_unit.h`,
+`riscv/zvk_ext_macros.h` and `riscv/zvkned_ext_macros.h` are therefore left
+untouched, which keeps the footprint on upstream small.
+
+If you change *what* the script inserts, reset the simulator sources first —
+each site is guarded by a token that only the patch introduces, so an
+already-patched file is skipped and would keep the old insertion:
+
+```bash
+make unpatch-spike && make spike
+```
+
+### Conformance to the specification
+
+The implementation follows `zvknhk.adoc` rather than the original fork, which
+predates the current spec text and differs from it in several ways: it treated
+`imm5` as a literal round count, strip-mined the permutation across `vl`, and
+placed the fixed encoding field at `0b10001` instead of `0b10010`. What the
+patched simulator now implements:
+
+- the state is one fixed element group designated by `vd`, with
+  `EMUL=NREG=ceil(EGW/VLEN)`, independent of `vl` and `LMUL`;
+- `imm5` is a selector — `0` gives 24 rounds, `1` gives 12 rounds using
+  `RC[12..23]`, and every other value is reserved;
+- `SEW != 64`, `vm=0`, a nonzero `vstart`, a reserved `imm5` and a misaligned
+  `vd` all raise an illegal-instruction exception;
+- elements 25..31 and all bits outside the fixed group are preserved.
 
 Each insertion is anchored on a nearby upstream line and guarded by a token
 that only this patch introduces, so the script is idempotent and re-runs
@@ -199,10 +239,18 @@ anchor rather than force the patch.
 ## Tests
 
 `test/` holds the instruction test suite, vendored from
-[keccak-xrv](https://github.com/mjosaarinen/keccak-xrv) (`70ef711`, 2026-06-11).
-It builds a static RISC-V binary and runs it under the Spike built above,
-checking the raw Keccak-_p_[1600] permutation plus SHA3-224/256/384/512 and
-SHAKE128/256 against known-answer vectors.
+[keccak-xrv](https://github.com/mjosaarinen/keccak-xrv) (`70ef711`, 2026-06-11)
+and extended here. It builds a static RISC-V binary and runs it under the Spike
+built above. Both round counts the instruction defines are covered:
+
+| Suite | `imm5` | Rounds | Vectors from |
+|---|---|---|---|
+| SHA-3, SHAKE128/256 | `0` | 24 | FIPS 202 |
+| TurboSHAKE128/256 | `1` | 12 | RFC 9861 §5 (`misc/rfc9861.txt`) |
+
+Each suite also checks the bare permutation on its own, so a failure in the
+instruction is distinguishable from one in the sponge padding. 39 vectors in
+total.
 
 ```bash
 make test            # builds spike if needed, then builds and runs the tests
@@ -222,12 +270,15 @@ Expected output ends with every vector passing:
 ```
 [PASS]	SHA3-256 64537B87892835FF0963EF9AD5145AB4CFCE5D303A0CB0415B3B03F9D16E7D6B
 ...
+[PASS]	TurboSHAKE128 1E415F1C5983AFF2169217277D17BB538CD945A397DDEC541F1CE41AF2C1B74C
+...
 [INFO] fail= 0
 ```
 
-`test/Makefile.upstream` is the unmodified keccak-xrv Makefile, kept for
-provenance; `test/Makefile` differs from it only in defaulting `SPIKE` and `PK`
-to this repo's build rather than whatever is on `PATH`.
+`test/Makefile` differs from the keccak-xrv original only in defaulting `SPIKE`
+and `PK` to this repo's build rather than whatever is on `PATH`. See
+[`test/README.md`](test/README.md) for what else diverges from upstream
+keccak-xrv.
 
 ## Build times
 

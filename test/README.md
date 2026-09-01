@@ -39,15 +39,29 @@ Both the simulator and the proxy kernel can be pointed elsewhere:
 make run SPIKE=/path/to/spike PK=/path/to/pk
 ```
 
-The `zvkk` extension added by the patch is what enables the instruction, so it
+The `zvknhk` extension added by the patch is what enables the instruction, so it
 has to appear in the ISA string. The Makefile uses:
 
 ```
---isa=rv64gcv_zvl256b_zvkk_zicntr_zihpm
+--isa=rv64gcv_zvl256b_zvknhk_zicntr_zihpm
 ```
 
-`zvl256b` matters: the state is one 2048-bit element group, so the instruction
-needs `VLEN` large enough to hold it at `LMUL=8`.
+`zvknhk` implies `zve64x` and `zvl128b`, so those need not be spelled out.
+
+`zvl256b` is required by this test's wrapper rather than by the instruction,
+for two independent reasons, both consequences of the wrapper using `vd=v8`
+and `LMUL=8`:
+
+- `vsetivli x0, 25, e64, m8` needs `VLMAX >= 25`. At `VLEN=128` and `LMUL=8`,
+  `VLMAX` is only 16, so the surrounding `vle64.v` would load just 16 of the
+  25 state words.
+- The fixed group spans `NREG = ceil(2048/VLEN)` registers and `vd` must be
+  `NREG`-aligned. At `VLEN=256`, `NREG=8` and `v8` is legal; at `VLEN=128`,
+  `NREG=16` and only `v0` and `v16` are, so `v8` raises an illegal
+  instruction.
+
+The instruction itself imposes no `VLEN >= 256` requirement — the fixed element
+group is independent of `vl` and `LMUL`.
 
 
 ##  What is tested
@@ -174,7 +188,7 @@ endianness, `vlen`, cycle and instruction counts). `vlen = 256` there confirms
 the ISA string took effect.
 
 If `vkeccak.vi` is not recognised — a Spike without the patch, or an ISA string
-without `zvkk` — the run traps on an illegal instruction instead of printing
+without `zvknhk` — the run traps on an illegal instruction instead of printing
 `[PASS]` lines.
 
 
@@ -191,7 +205,6 @@ without `zvkk` — the run traps on an illegal instruction instead of printing
 | `test_rvkat_sio.c`, `test_rvkat.h` | minimal self-contained I/O and hex helpers |
 | `plat_local.h` | platform detection, cycle/instret counters |
 | `Makefile` | build and run against this repository's Spike |
-| `Makefile.upstream` | the unmodified keccak-xrv Makefile, kept for reference |
 
 
 ##  Provenance
@@ -200,8 +213,7 @@ Vendored from <https://github.com/mjosaarinen/keccak-xrv> at commit `70ef711`
 (2026-06-11). Changes since:
 
 - `Makefile` defaults `SPIKE` and `PK` to this repository's build rather than
-  to whatever is found on `PATH`. The unmodified original is kept alongside as
-  `Makefile.upstream`.
+  to whatever is found on `PATH`.
 - `keccak_insn.c` emits the encoding defined by `zvknhk.adoc`, and adds the
   12-round wrapper.
 - `turbo_api.[ch]` and `test_turbo.c` are new; the TurboSHAKE vectors come from

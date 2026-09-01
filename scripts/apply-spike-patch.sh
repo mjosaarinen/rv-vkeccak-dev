@@ -7,7 +7,7 @@ set -euo pipefail
 #
 #   1. Copy spike/vkeccak_vi.h into the simulator's riscv/insns/ directory.
 #   2. Insert the small amount of glue that registers the instruction: the
-#      EXT_ZVKK extension id, its ISA-string name ("zvkk"), the encoding, the
+#      EXT_ZVKNHK extension id, its ISA-string name ("zvknhk"), the encoding, the
 #      build-system entry, and the disassembler entry.
 #
 # The instruction body is self-contained: because zvknhk.adoc defines the state
@@ -124,7 +124,7 @@ cat > "$BLOCKS/disasm.cc" <<'EOF'
   // vs1 field is a fixed part of the opcode. The generic .vi helpers read the
   // immediate from bits 19:15 and print a vs2 register, so using one here
   // would render `vkeccak.vi vd, imm5` as `vkeccak.vi vd, v<imm5>, 18`.
-  if (ext_enabled(EXT_ZVKK)) {
+  if (ext_enabled(EXT_ZVKNHK)) {
     static struct : public arg_t {
       std::string to_string(insn_t insn) const {
         return std::to_string(insn.rs2());
@@ -137,7 +137,11 @@ EOF
 
 cat > "$BLOCKS/isa_parser.cc" <<'EOF'
   // Zvknhk (vkeccak.vi) -- applied by scripts/apply-spike-patch.sh
-  {"zvkk", {EXT_ZVKK}},
+  // zvknhk.adoc: "Zvknhk depends on Zve64x and requires VLEN to be at least
+  // 128 bits (Zvl128b)." Declaring those as implied keeps a bare
+  // --isa=rv64i_zvknhk from being accepted as a vector-less nonsense string;
+  // zvl128b only raises VLEN, so an explicit larger zvl still wins.
+  {"zvknhk", {EXT_ZVKNHK}, {"zve64x", "zvl128b"}},
 EOF
 
 cat > "$BLOCKS/encoding_match.h" <<'EOF'
@@ -151,17 +155,17 @@ DECLARE_INSN(vkeccak_vi, MATCH_VKECCAK_VI, MASK_VKECCAK_VI)
 EOF
 
 cat > "$BLOCKS/isa_parser.h" <<'EOF'
-  EXT_ZVKK,  /* Zvknhk (vkeccak.vi) */
+  EXT_ZVKNHK,  /* Zvknhk (vkeccak.vi) */
 EOF
 
 # NOTE: tabs are significant in the two riscv.mk.in blocks below.
 printf '%s\n' \
     '# Zvknhk (vkeccak.vi) -- applied by scripts/apply-spike-patch.sh' \
-    'riscv_insn_ext_zvkk = \' \
+    'riscv_insn_ext_zvknhk = \' \
     "$(printf '\tvkeccak_vi \\')" \
     '' > "$BLOCKS/riscv.mk.in.list"
 
-printf '%s\n' "$(printf '\t$(riscv_insn_ext_zvkk) \\')" > "$BLOCKS/riscv.mk.in.use"
+printf '%s\n' "$(printf '\t$(riscv_insn_ext_zvknhk) \\')" > "$BLOCKS/riscv.mk.in.use"
 
 # ------------------------------------------------------------------ apply ---
 
@@ -176,11 +180,11 @@ echo "==> Registering the instruction in the Spike sources"
 
 patch_file riscv/isa_parser.h after \
     '  EXT_ZICFISS,' - \
-    'EXT_ZVKK' "$BLOCKS/isa_parser.h"
+    'EXT_ZVKNHK' "$BLOCKS/isa_parser.h"
 
 patch_file disasm/isa_parser.cc after \
     '  {"zvkt"},' - \
-    '{"zvkk"' "$BLOCKS/isa_parser.cc"
+    '{"zvknhk"' "$BLOCKS/isa_parser.cc"
 
 patch_file riscv/encoding.h after \
     '#define MASK_VIOTA_M 0xfc0ff07f' - \
@@ -192,11 +196,11 @@ patch_file riscv/encoding.h after \
 
 patch_file riscv/riscv.mk.in before \
     'riscv_insn_ext_p = \' - \
-    'riscv_insn_ext_zvkk = ' "$BLOCKS/riscv.mk.in.list"
+    'riscv_insn_ext_zvknhk = ' "$BLOCKS/riscv.mk.in.list"
 
 patch_file riscv/riscv.mk.in after \
     '$(riscv_insn_ext_zicfiss) \' - \
-    '$(riscv_insn_ext_zvkk)' "$BLOCKS/riscv.mk.in.use"
+    '$(riscv_insn_ext_zvknhk)' "$BLOCKS/riscv.mk.in.use"
 
 # The disassembler entry goes next to the other Zvk* blocks. The upstream fork
 # nested it inside `if (ext_enabled(EXT_ZICFISS))`, which only shows up under
