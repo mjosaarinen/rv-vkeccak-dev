@@ -238,10 +238,9 @@ anchor rather than force the patch.
 
 ## Tests
 
-`test/` holds the instruction test suite, vendored from
-[keccak-xrv](https://github.com/mjosaarinen/keccak-xrv) (`70ef711`, 2026-06-11)
-and extended here. It builds a static RISC-V binary and runs it under the Spike
-built above. Both round counts the instruction defines are covered:
+`test/` holds the instruction test suite. It builds a static RISC-V binary and
+runs it under the Spike built above. Both round counts the instruction defines
+are covered:
 
 | Suite | `imm5` | Rounds | Vectors from |
 |---|---|---|---|
@@ -254,7 +253,13 @@ total.
 
 ```bash
 make test            # builds spike if needed, then builds and runs the tests
+make test-all        # the same, at every VLEN the spec tabulates (128..2048)
 ```
+
+The fixed element group spans `NREG = ceil(2048/VLEN)` registers, so both its
+extent and the set of legal `vd` change with `VLEN`. The tests are built for
+the smallest supported `VLEN` and run unmodified at 128, 256, 512, 1024 and
+2048; see [`test/README.md`](test/README.md) for how.
 
 It needs a `riscv64-unknown-linux-gnu` toolchain and `$RISCV` pointing at its
 install prefix (the proxy kernel `pk` is taken from
@@ -275,10 +280,8 @@ Expected output ends with every vector passing:
 [INFO] fail= 0
 ```
 
-`test/Makefile` differs from the keccak-xrv original only in defaulting `SPIKE`
-and `PK` to this repo's build rather than whatever is on `PATH`. See
-[`test/README.md`](test/README.md) for what else diverges from upstream
-keccak-xrv.
+`test/Makefile` defaults `SPIKE` and `PK` to this repo's build rather than
+whatever is on `PATH`, and selects the runtime `VLEN`.
 
 ## Build times
 
@@ -354,8 +357,8 @@ variables at the top of it.
   repo exists and the single source of truth for the spec
 - **`spike/vkeccak_vi.h`** -- the instruction's reference semantics for Spike;
   the source of truth for the simulator, edit it here
-- `test/` -- instruction tests (SHA-3 / SHAKE known-answer vectors), vendored
-  from keccak-xrv
+- `test/` -- instruction tests: SHA-3 / SHAKE (24 rounds) and TurboSHAKE
+  (12 rounds) known-answer vectors
 - `scripts/apply-patch.sh` -- Layers `zvknhk.adoc` onto the upstream manual sources
 - `scripts/apply-spike-patch.sh` -- Layers the Zvknhk instruction onto the
   upstream Spike sources

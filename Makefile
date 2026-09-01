@@ -9,6 +9,7 @@
 #   make patch-spike  — Patch the Zvknhk instruction into the upstream Spike sources
 #   make unpatch-spike— Restore the Spike sources to pristine upstream
 #   make test         — Build and run the instruction tests under the built Spike
+#   make test-all     — Run the tests at every VLEN the spec tabulates (128..2048)
 #   make docker-pull  — Pull the RISC-V docs Docker image
 #   make install-deps — Install native build deps (Ubuntu/Debian, needs sudo)
 #   make clean        — Remove build artifacts
@@ -39,7 +40,7 @@ SKIP_DOCKER ?= $(shell command -v docker >/dev/null 2>&1 && echo false || echo t
 MAKE_OPTS := SKIP_DOCKER=$(SKIP_DOCKER)
 
 .PHONY: all pdf html patch clean force-clean docker-pull install-deps submodule-init
-.PHONY: spike patch-spike unpatch-spike test test-clean spike-clean sim-submodule-init
+.PHONY: spike patch-spike unpatch-spike test test-all test-clean spike-clean sim-submodule-init
 
 # The PDF and HTML builds share riscv-isa-manual/build (and build/images-out),
 # so they must not run concurrently — force serial execution even under `make -j`.
@@ -132,6 +133,12 @@ spike: patch-spike
 # riscv64-unknown-linux-gnu toolchain and $$RISCV set (see test/README.md).
 test: spike
 	$(MAKE) -C $(TEST_DIR) run SPIKE=$(abspath $(SPIKE_BIN))
+
+# The fixed element group spans NREG=ceil(2048/VLEN) registers, so the number
+# of registers it occupies -- and which vd are legal -- changes with VLEN.
+# This runs the whole suite at each VLEN the specification tabulates.
+test-all: spike
+	$(MAKE) -C $(TEST_DIR) run-all SPIKE=$(abspath $(SPIKE_BIN))
 
 spike-clean:
 	rm -rf $(SIM_BUILD)

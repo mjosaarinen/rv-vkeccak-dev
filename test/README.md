@@ -8,7 +8,7 @@ this repository. Both round counts the instruction offers are covered: 24
 rounds via SHA-3 and SHAKE, and 12 rounds via TurboSHAKE.
 
 Original code by Markku-Juhani O. Saarinen; the instruction itself is credited
-to Nicolas Brunie. See _Provenance_ at the end.
+to Nicolas Brunie.
 
 
 ##  Running
@@ -40,29 +40,65 @@ make run SPIKE=/path/to/spike PK=/path/to/pk
 ```
 
 The `zvknhk` extension added by the patch is what enables the instruction, so it
-has to appear in the ISA string. The Makefile uses:
+has to appear in the ISA string. The Makefile builds one from `VLEN`:
 
 ```
---isa=rv64gcv_zvl256b_zvknhk_zicntr_zihpm
+--isa=rv64gcv_zvl$(VLEN)b_zvknhk_zicntr_zihpm
 ```
 
 `zvknhk` implies `zve64x` and `zvl128b`, so those need not be spelled out.
 
-`zvl256b` is required by this test's wrapper rather than by the instruction,
-for two independent reasons, both consequences of the wrapper using `vd=v8`
-and `LMUL=8`:
+### VLEN configurations
 
-- `vsetivli x0, 25, e64, m8` needs `VLMAX >= 25`. At `VLEN=128` and `LMUL=8`,
-  `VLMAX` is only 16, so the surrounding `vle64.v` would load just 16 of the
-  25 state words.
-- The fixed group spans `NREG = ceil(2048/VLEN)` registers and `vd` must be
-  `NREG`-aligned. At `VLEN=256`, `NREG=8` and `v8` is legal; at `VLEN=128`,
-  `NREG=16` and only `v0` and `v16` are, so `v8` raises an illegal
-  instruction.
+The fixed element group is `EGW=2048` bits, so it spans
+`NREG = ceil(2048/VLEN)` registers and `vd` must be `NREG`-aligned. Both the
+number of registers and the set of legal `vd` therefore change with `VLEN`
+(`zvknhk.adoc`):
 
-The instruction itself imposes no `VLEN >= 256` requirement — the fixed element
-group is independent of `vl` and `LMUL`.
+| `VLEN` | `NREG` | Valid `vd` |
+|---|---|---|
+| 128 | 16 | `v0`, `v16` |
+| 256 | 8 | `v0`, `v8`, `v16`, `v24` |
+| 512 | 4 | `v0`, `v4`, ..., `v28` |
+| 1024 | 2 | `v0`, `v2`, ..., `v30` |
+| >= 2048 | 1 | any `vd` |
 
+The tests run at all of these. Pick one with `VLEN=`, or sweep them all:
+
+```bash
+make run VLEN=512     # a single configuration
+make run-all          # 128, 256, 512, 1024, 2048
+```
+
+`run-all` reports one line per configuration and fails the build if any of them
+does. For each it checks the simulator's exit status (`test_main` returns the
+failure count, and a trap exits 255), that the run really happened at the
+requested `VLEN`, that the reported failure count is zero, and that vectors
+actually ran — the last so that an empty or truncated run cannot pass
+silently:
+
+```
+VLEN=128 ok: 39 vectors
+VLEN=256 ok: 39 vectors
+...
+```
+
+`make test-all` in the repository root does the same thing, building Spike
+first if needed.
+
+The binary is compiled for `rv64gcv_zvl128b` — the smallest supported `VLEN`,
+so that one binary is valid at every configuration — and the simulator is then
+told the actual `VLEN` at run time.
+
+Two details make `keccak_insn.c` VLEN-generic:
+
+- It uses `vd=v0`, which is an `NREG`-aligned group start at every `VLEN`.
+- The instruction ignores `vl`, but the surrounding `vle64.v`/`vse64.v` that
+  move the 25 active state words do not. At `LMUL=8` the largest usable `vl`
+  is `VLMAX = 8*VLEN/64`, which is comfortably above 25 for `VLEN >= 256` but
+  only 16 at `VLEN=128`. There the transfer is split in two — elements 0..15
+  into `v0..v7`, then 16..24 into `v8..v12` — both halves landing inside the
+  16-register group that `v0` spans at that `VLEN`.
 
 ##  What is tested
 
@@ -207,21 +243,15 @@ without `zvknhk` — the run traps on an illegal instruction instead of printing
 | `Makefile` | build and run against this repository's Spike |
 
 
-##  Provenance
+##  Notes
 
-Vendored from <https://github.com/mjosaarinen/keccak-xrv> at commit `70ef711`
-(2026-06-11). Changes since:
+The SHA-3 and SHAKE sponge code in `sha3_api.c` and the test scaffolding
+(`test_rvkat*`, `plat_local.h`) are deliberately plain, unoptimised C: they
+exist to exercise the instruction, not to be fast. `turbo_api.c` follows the
+same shape for TurboSHAKE.
 
-- `Makefile` defaults `SPIKE` and `PK` to this repository's build rather than
-  to whatever is found on `PATH`.
-- `keccak_insn.c` emits the encoding defined by `zvknhk.adoc`, and adds the
-  12-round wrapper.
-- `turbo_api.[ch]` and `test_turbo.c` are new; the TurboSHAKE vectors come from
-  RFC 9861, a copy of which is in [`misc/`](../misc/).
-
-The remaining files are unmodified.
-
-The upstream keccak-xrv README described building a Keccak-enabled Spike from
-the `dev-keccak` branch of a Spike fork. That is no longer how this works: the
-repository patches the instruction into pristine upstream Spike instead, via
-`scripts/apply-spike-patch.sh`. See the [top-level README](../README.md).
+`keccak_insn.c` is the only file that emits `vkeccak.vi`; the sponges, the
+vectors and the scaffolding above it are portable C. That is what makes the
+`KECCAK-P` / `KECCAK-P12` checks useful: if those pass but the SHA-3 or
+TurboSHAKE vectors fail, the fault is in the padding code rather than in the
+instruction.

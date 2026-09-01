@@ -1,6 +1,8 @@
 //  keccak_insn.c
 //  Markku-Juhani O. Saarinen <mjos@iki.fi>. Credit: Nicolas Brunie.
-//  === Single-instruction Keccak-f1600
+//  === Single-instruction Keccak-p[1600]
+
+#include "plat_local.h"
 
 //  The assembler does not know `vkeccak.vi` yet, so the instruction is emitted
 //  with `.insn`. Only two of the five R-type fields are real operands; see
@@ -11,26 +13,47 @@
 //      rs2 = imm5  -- the round-count selector: 0 -> 24 rounds, 1 -> 12 rounds
 //
 //  The state is one fixed element group of EGW=2048 bits designated by vd,
-//  independent of vl and LMUL, so vl only has to be large enough for the
-//  surrounding vle64/vse64 of the 25 active state words.
-
-//  The two permutations differ only in imm5, which must be an encoded
-//  register number in the rs2 field, hence the macro rather than a parameter.
+//  spanning NREG = ceil(2048/VLEN) registers, independent of vl and LMUL.
+//  We use vd=v0, which is an NREG-aligned group start at every VLEN.
+//
+//  vl matters only for the surrounding vle64/vse64 that move the 25 active
+//  state words. At LMUL=8 the largest usable vl is VLMAX = 8*VLEN/64, which
+//  is >= 25 for VLEN >= 256 but only 16 at VLEN=128 -- so there the transfer
+//  is split in two: elements 0..15 into v0..v7, then 16..24 into v8..v12.
+//  Both halves stay inside the 16-register group that vd=v0 spans at VLEN=128.
 
 #define KECCAK_INSN(name, imm5)                                     \
 void name(void *state)                                              \
 {                                                                   \
-    __asm volatile (                                                \
-        "vsetivli x0, 25, e64, m8, tu, mu\n"                        \
-        "vle64.v v8, 0(%[state])\n"                                 \
-        /*  vkeccak.vi v8, imm5                                  */  \
-        /*  .insn r opc, func3, func7, rd, rs1, rs2              */  \
-        ".insn r 0x77, 0x2, 0x53, x8, x18, " imm5 "\n"              \
-        "vse64.v v8, 0(%[state])\n"                                 \
-        :                                                           \
-        : [state]"r"(state)                                         \
-        : "memory"                                                  \
-    );                                                              \
+    if (rv_get_vlenb() >= 32) {         /*  VLEN >= 256  */         \
+        __asm volatile (                                            \
+            "vsetivli x0, 25, e64, m8, tu, mu\n"                    \
+            "vle64.v v0, 0(%[s])\n"                                 \
+            /*  vkeccak.vi v0, imm5                              */  \
+            /*  .insn r opc, func3, func7, rd, rs1, rs2          */  \
+            ".insn r 0x77, 0x2, 0x53, x0, x18, " imm5 "\n"          \
+            "vse64.v v0, 0(%[s])\n"                                 \
+            :                                                       \
+            : [s]"r"(state)                                         \
+            : "memory"                                              \
+        );                                                          \
+    } else {                            /*  VLEN == 128  */         \
+        void *hi = (void *) ((char *) state + 16 * 8);              \
+        __asm volatile (                                            \
+            "vsetivli x0, 16, e64, m8, tu, mu\n"                    \
+            "vle64.v v0, 0(%[s])\n"                                 \
+            "vsetivli x0, 9, e64, m8, tu, mu\n"                     \
+            "vle64.v v8, 0(%[h])\n"                                 \
+            ".insn r 0x77, 0x2, 0x53, x0, x18, " imm5 "\n"          \
+            "vsetivli x0, 16, e64, m8, tu, mu\n"                    \
+            "vse64.v v0, 0(%[s])\n"                                 \
+            "vsetivli x0, 9, e64, m8, tu, mu\n"                     \
+            "vse64.v v8, 0(%[h])\n"                                 \
+            :                                                       \
+            : [s]"r"(state), [h]"r"(hi)                             \
+            : "memory"                                              \
+        );                                                          \
+    }                                                               \
 }
 
 //  Keccak-p[1600,24] = Keccak-f[1600]; used by SHA-3 and SHAKE.
