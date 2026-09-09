@@ -1,3 +1,11 @@
+
+# HISTORICAL
+
+**2026-09-09**: See the official PQC TG repository at: [`https://github.com/riscv/riscv-pqc`](https://github.com/riscv/riscv-pqc) and specifically the [`zvknhk`](https://github.com/riscv/riscv-pqc/tree/main/zvknhk) folder for up to date material.
+
+Cheers, -markku
+
+
 # rv-vkeccak-dev
 
 Development of the **`Zvknhk`** RISC-V Vector Keccak extension.
